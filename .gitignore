@@ -1,0 +1,7 @@
+node_modules/
+dist/
+media/panel.js
+media/panel.js.map
+*.vsix
+.DS_Store
+SPEC.md

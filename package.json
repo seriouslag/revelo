@@ -1,0 +1,154 @@
+{
+  "name": "revelo",
+  "displayName": "Revelo",
+  "description": "Reveal and edit GitHub, Sentry, and Jira issues from references in your code comments and Markdown.",
+  "version": "0.0.1",
+  "publisher": "seriouslag",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "github",
+    "sentry",
+    "jira",
+    "hover",
+    "issue",
+    "pull request",
+    "links"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/seriouslag/revelo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/seriouslag/revelo/issues"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "revelo.openPanel",
+        "title": "Revelo: Open Details"
+      },
+      {
+        "command": "revelo.signInGitHub",
+        "title": "Revelo: Sign in to GitHub"
+      },
+      {
+        "command": "revelo.clearCache",
+        "title": "Revelo: Clear Cache"
+      },
+      {
+        "command": "revelo.setGitHubToken",
+        "title": "Revelo: Set GitHub Token"
+      },
+      {
+        "command": "revelo.setSentryToken",
+        "title": "Revelo: Set Sentry Token"
+      },
+      {
+        "command": "revelo.setJiraToken",
+        "title": "Revelo: Set Jira Token"
+      }
+    ],
+    "configuration": {
+      "title": "Revelo",
+      "properties": {
+        "revelo.github.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable GitHub reference detection."
+        },
+        "revelo.github.defaultRepo": {
+          "type": "string",
+          "default": "",
+          "description": "Fallback owner/repo for bare #123 references when no git remote is found."
+        },
+        "revelo.sentry.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Sentry reference detection. Requires a Sentry token (Revelo: Set Sentry Token)."
+        },
+        "revelo.sentry.apiBaseUrl": {
+          "type": "string",
+          "default": "https://sentry.io",
+          "description": "Sentry base URL. Use a region host (e.g. https://us.sentry.io, https://de.sentry.io) or your self-hosted URL."
+        },
+        "revelo.sentry.orgSlug": {
+          "type": "string",
+          "default": "",
+          "description": "Default Sentry organization slug, used to resolve short IDs and URLs without an org."
+        },
+        "revelo.sentry.shortIdPrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Uppercased project slugs to treat as Sentry short IDs (e.g. [\"C3-FRONTEND\", \"CASH-SMARTCASH-HSBC-INTEGRATION\"]). Matches the full slug before the issue number. Prevents matching unrelated text like UTF-8."
+        },
+        "revelo.sentry.enableEditing": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show editing controls (change status) in the Sentry panel. Requires your Sentry token to have the event:write scope."
+        },
+        "revelo.jira.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Jira reference detection. Requires siteUrl, email, and a token (Revelo: Set Jira Token)."
+        },
+        "revelo.jira.siteUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Jira Cloud site URL, e.g. https://your-company.atlassian.net"
+        },
+        "revelo.jira.email": {
+          "type": "string",
+          "default": "",
+          "description": "Atlassian account email, used with the API token for Basic auth."
+        },
+        "revelo.jira.projectKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Project keys to treat as Jira issues (e.g. [\"ABC\", \"PROJ\"]). When set, only these prefixes match bare keys — prevents false positives like UTF-8. Leave empty to match any key not on the denylist."
+        },
+        "revelo.cache.ttlSeconds": {
+          "type": "number",
+          "default": 300,
+          "description": "How long fetched reference details are cached, in seconds."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "package": "npm run check-types && npm run lint && node rolldown.config.mjs --production",
+    "compile": "npm run check-types && node rolldown.config.mjs",
+    "watch": "node rolldown.config.mjs --watch",
+    "check-types": "tsc --noEmit && tsc --noEmit -p tsconfig.webview.json",
+    "lint": "oxlint src media",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "~1.85.0",
+    "oxlint": "^1.73.0",
+    "rolldown": "^1.1.5",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "adf-to-md": "^1.2.1"
+  }
+}

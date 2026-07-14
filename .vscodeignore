@@ -1,0 +1,14 @@
+src/**
+media/**/*.ts
+node_modules/**
+esbuild.js
+rolldown.config.mjs
+tsconfig.json
+tsconfig.webview.json
+.oxlintrc.json
+**/*.map
+**/*.ts
+SPEC.md
+.gitignore
+.vscode/**
+vitest.config.*
