@@ -1,3 +1,4 @@
+.github/**
 src/**
 media/**/*.ts
 node_modules/**

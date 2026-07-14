@@ -1,0 +1,57 @@
+name: Publish
+
+# Manual only for now — trigger from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      versionBump:
+        description: "Version bump before publishing"
+        type: choice
+        default: none
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      dryRun:
+        description: "Package only, do not publish"
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Full gate before anything is published.
+      - run: npm run check-types
+      - run: npm run lint
+      - run: npm test
+
+      - name: Bump version
+        if: ${{ inputs.versionBump != 'none' }}
+        run: npm version ${{ inputs.versionBump }} --no-git-tag-version
+
+      - name: Package
+        run: npx --yes @vscode/vsce package --no-dependencies -o revelo.vsix
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ !inputs.dryRun }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish --no-dependencies --packagePath revelo.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: revelo-vsix
+          path: revelo.vsix
+          if-no-files-found: error
