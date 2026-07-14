@@ -17,9 +17,12 @@
     "sentry",
     "jira",
     "hover",
-    "issue",
+    "issue tracker",
     "pull request",
-    "links"
+    "cursor",
+    "developer tools",
+    "code annotations",
+    "productivity"
   ],
   "repository": {
     "type": "git",
