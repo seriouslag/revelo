@@ -4,6 +4,9 @@ Rich hover cards and detail panels for **GitHub**, **Sentry**, and **Jira** refe
 
 Works in VS Code and Cursor.
 
+[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/seriouslag.revelo.png?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=seriouslag.revelo)
+[![Open VSX (Cursor)](https://img.shields.io/open-vsx/v/seriouslag/revelo?label=Open%20VSX%20(Cursor)&logo=cursor)](https://open-vsx.org/extension/seriouslag/revelo)
+
 ## Features
 
 - **GitHub** — issues, PRs, and discussions. Detects `#123`, `GH-123`, `owner/repo#123`, and full `github.com` URLs (including GitHub Enterprise). Shows title, state (open/closed/merged/draft with the correct color), author, labels, and a body snippet.
