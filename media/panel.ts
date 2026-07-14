@@ -128,7 +128,13 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
     };
     const renderList = (): void => {
       assigneeList.innerHTML = '';
-      const rows: EditOption[] = [{ id: '', label: 'Unassigned' }, ...items];
+      const q = assigneeInput.value.trim().toLowerCase();
+      const matches = q ? items.filter((it) => it.label.toLowerCase().includes(q)) : items;
+      const rows: EditOption[] = [];
+      if (!q || 'unassigned'.includes(q)) {
+        rows.push({ id: '', label: 'Unassigned' });
+      }
+      rows.push(...matches);
       rows.forEach((row, i) => {
         const li = document.createElement('li');
         li.textContent = row.label;
@@ -243,9 +249,23 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
         try {
           const options = await requestOptions('label', '');
           labelEditor.innerHTML = '';
+
+          const search = document.createElement('input');
+          search.type = 'text';
+          search.className = 'label-search';
+          search.placeholder = 'Search labels…';
+          search.autocomplete = 'off';
+          search.spellcheck = false;
+          labelEditor.appendChild(search);
+
+          const list = document.createElement('div');
+          list.className = 'label-list';
+          labelEditor.appendChild(list);
+
           for (const opt of options) {
             const wrap = document.createElement('label');
             wrap.className = 'label-check';
+            wrap.dataset.label = opt.label.toLowerCase();
             const cb = document.createElement('input');
             cb.type = 'checkbox';
             cb.value = opt.id;
@@ -254,8 +274,16 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
             span.textContent = opt.label;
             wrap.appendChild(cb);
             wrap.appendChild(span);
-            labelEditor.appendChild(wrap);
+            list.appendChild(wrap);
           }
+
+          search.addEventListener('input', () => {
+            const q = search.value.trim().toLowerCase();
+            for (const wrap of list.querySelectorAll<HTMLElement>('.label-check')) {
+              wrap.hidden = q !== '' && !(wrap.dataset.label ?? '').includes(q);
+            }
+          });
+
           const apply = document.createElement('button');
           apply.textContent = 'Apply labels';
           apply.addEventListener('click', async () => {

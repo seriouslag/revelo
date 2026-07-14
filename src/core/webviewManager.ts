@@ -133,6 +133,8 @@ export class WebviewManager {
   .combobox-list li.empty { color: var(--vscode-descriptionForeground); cursor: default; }
   .label-editor { margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--vscode-panel-border);
                   border-radius: 4px; max-width: 400px; }
+  .label-search { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
+  .label-list { max-height: 220px; overflow-y: auto; }
   .label-check { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 0.9em; }
   .label-check input { width: auto; }
   .label-editor button { margin-top: 8px; }

@@ -4,7 +4,7 @@ import { ReferenceIndex } from './core/referenceIndex';
 import { createHoverProvider, createLinkProvider } from './core/scanner';
 import { WebviewManager } from './core/webviewManager';
 import type { InboundMessage } from './core/webviewProtocol';
-import type { Provider, Reference } from './core/types';
+import type { Provider, ProviderId, Reference } from './core/types';
 import { GitHubProvider } from './providers/github';
 import { SentryProvider } from './providers/sentry';
 import { JiraProvider } from './providers/jira';
@@ -93,6 +93,34 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  void warnMissingTokens(context, [
+    { provider: sentry, command: 'revelo.setSentryToken' },
+    { provider: jira, command: 'revelo.setJiraToken' },
+  ]);
+
+  if (context.extensionMode === vscode.ExtensionMode.Development) {
+    void vscode.commands.executeCommand('setContext', 'revelo.devMode', true);
+    const clearToken = async (
+      providerId: ProviderId,
+      clear: () => Promise<void>,
+    ): Promise<void> => {
+      await clear();
+      await context.globalState.update(`revelo.tokenAlertDismissed.${providerId}`, false);
+      vscode.window.showInformationMessage(`Revelo: ${providerId} token cleared`);
+    };
+    context.subscriptions.push(
+      vscode.commands.registerCommand('revelo.clearGitHubToken', () =>
+        clearToken('github', () => github.auth.clearPat()),
+      ),
+      vscode.commands.registerCommand('revelo.clearSentryToken', () =>
+        clearToken('sentry', () => sentry.auth.clearToken()),
+      ),
+      vscode.commands.registerCommand('revelo.clearJiraToken', () =>
+        clearToken('jira', () => jira.auth.clearToken()),
+      ),
+    );
+  }
+
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(selector, createHoverProvider(registry, index)),
     vscode.languages.registerDocumentLinkProvider(selector, createLinkProvider(registry, index)),
@@ -120,3 +148,33 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
+
+async function warnMissingTokens(
+  context: vscode.ExtensionContext,
+  targets: { provider: Provider; command: string }[],
+): Promise<void> {
+  for (const { provider, command } of targets) {
+    if (!provider.isEnabled()) {
+      continue;
+    }
+    if (await provider.auth.getToken()) {
+      continue;
+    }
+    const dismissKey = `revelo.tokenAlertDismissed.${provider.id}`;
+    if (context.globalState.get<boolean>(dismissKey)) {
+      continue;
+    }
+    const setToken = 'Set token';
+    const dismiss = "Don't show again";
+    const choice = await vscode.window.showWarningMessage(
+      `Revelo: ${provider.displayName} is enabled but has no token set — references won't resolve.`,
+      setToken,
+      dismiss,
+    );
+    if (choice === setToken) {
+      await vscode.commands.executeCommand(command);
+    } else if (choice === dismiss) {
+      await context.globalState.update(dismissKey, true);
+    }
+  }
+}

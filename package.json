@@ -60,8 +60,36 @@
       {
         "command": "revelo.setJiraToken",
         "title": "Revelo: Set Jira Token"
+      },
+      {
+        "command": "revelo.clearGitHubToken",
+        "title": "Revelo: Clear GitHub Token (dev)"
+      },
+      {
+        "command": "revelo.clearSentryToken",
+        "title": "Revelo: Clear Sentry Token (dev)"
+      },
+      {
+        "command": "revelo.clearJiraToken",
+        "title": "Revelo: Clear Jira Token (dev)"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "revelo.clearGitHubToken",
+          "when": "revelo.devMode"
+        },
+        {
+          "command": "revelo.clearSentryToken",
+          "when": "revelo.devMode"
+        },
+        {
+          "command": "revelo.clearJiraToken",
+          "when": "revelo.devMode"
+        }
+      ]
+    },
     "configuration": {
       "title": "Revelo",
       "properties": {
