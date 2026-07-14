@@ -17,7 +17,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      # Use `npm install`, not `npm ci`: rolldown's per-platform optional native
+      # deps (@emnapi/*) drift between the dev lockfile and the Linux runner,
+      # which `npm ci` rejects. `npm install` honors the lockfile but tolerates
+      # platform-specific optional-dep resolution.
+      - run: npm install --no-audit --no-fund
 
       - name: Type-check
         run: npm run check-types

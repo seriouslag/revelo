@@ -29,7 +29,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      # See ci.yml: npm install (not ci) to tolerate rolldown's per-platform
+      # optional native deps.
+      - run: npm install --no-audit --no-fund
 
       # Full gate before anything is published.
       - run: npm run check-types
