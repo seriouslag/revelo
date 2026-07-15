@@ -335,4 +335,42 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
       }
     });
   }
+
+  // --- Create Jira issue from TODO ---
+  const createBtn = document.querySelector<HTMLButtonElement>('[data-action="create-issue"]');
+  if (createBtn) {
+    const status = document.querySelector('[data-status-for="create"]');
+    const projectEl = document.querySelector<HTMLInputElement | HTMLSelectElement>(
+      '[data-create="project"]',
+    );
+    const typeEl = document.querySelector<HTMLSelectElement>('[data-create="type"]');
+    const summaryEl = document.querySelector<HTMLTextAreaElement>('[data-create="summary"]');
+    createBtn.addEventListener('click', async () => {
+      const projectKey = projectEl?.value.trim() ?? '';
+      const issueType = typeEl?.value.trim() ?? '';
+      const summary = summaryEl?.value.trim() ?? '';
+      if (!projectKey) {
+        setStatus(status, 'Project key is required', 'err');
+        return;
+      }
+      if (!summary) {
+        setStatus(status, 'Summary is required', 'err');
+        return;
+      }
+      setStatus(status, 'Creating…');
+      createBtn.disabled = true;
+      try {
+        const res = await request({
+          type: 'createIssue',
+          input: { projectKey, issueType, summary },
+        });
+        if (res.type === 'created') {
+          setStatus(status, `Created ${res.key} ✓`, 'ok');
+        }
+      } catch (e) {
+        setStatus(status, errMsg(e), 'err');
+        createBtn.disabled = false;
+      }
+    });
+  }
 })();

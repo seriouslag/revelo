@@ -3,8 +3,14 @@ import { ProviderRegistry } from './core/registry';
 import { ReferenceIndex } from './core/referenceIndex';
 import { createHoverProvider, createLinkProvider } from './core/scanner';
 import { registerTodoDiagnostics } from './core/todoDiagnostics';
-import { createTodoCodeActionProvider, createJiraFromTodo, CREATE_COMMAND } from './core/todoActions';
+import {
+  createTodoCodeActionProvider,
+  unlinkedTodoOnLine,
+  insertTodoKey,
+  CREATE_COMMAND,
+} from './core/todoActions';
 import { WebviewManager } from './core/webviewManager';
+import { renderCreatePanel } from './providers/jira/createPanel';
 import type { InboundMessage } from './core/webviewProtocol';
 import type { Provider, ProviderId, Reference } from './core/types';
 import { GitHubProvider } from './providers/github';
@@ -46,6 +52,50 @@ export function activate(context: vscode.ExtensionContext): void {
       const message = error instanceof Error ? error.message : String(error);
       vscode.window.showWarningMessage(`Revelo: could not load ${ref.raw} — ${message}`);
     }
+  }
+
+  // Open the panel with a Jira "create issue from TODO" form. On success,
+  // write the new key back into the comment and show the created issue.
+  async function openCreatePanel(uri?: vscode.Uri, line?: number): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    const targetUri = uri ?? editor?.document.uri;
+    if (!targetUri) {
+      return;
+    }
+    const document = await vscode.workspace.openTextDocument(targetUri);
+    const targetLine = line ?? editor?.selection.active.line ?? 0;
+    const todo = unlinkedTodoOnLine(document, targetLine);
+    if (!todo) {
+      vscode.window.showWarningMessage('Revelo: no unlinked TODO found on this line.');
+      return;
+    }
+
+    const cfg = vscode.workspace.getConfiguration('revelo.jira');
+    const projectKeys = cfg.get<string[]>('projectKeys', []);
+    const issueTypes = cfg.get<string[]>('issueTypes', ['Task', 'Bug', 'Story']);
+
+    webview.show({
+      title: 'Create Jira ticket',
+      renderBody: () =>
+        renderCreatePanel({ projectKeys, issueTypes, summary: todo.summary || todo.keyword }),
+      onMessage: async (message) => {
+        if (message.type !== 'createIssue') {
+          return;
+        }
+        try {
+          const key = await jira.createIssue(message.input);
+          webview.post({ type: 'created', requestId: message.requestId, key });
+          await insertTodoKey(targetUri, targetLine, todo, key);
+          // Swap the panel to the freshly created issue's detail view.
+          const ref = jira.refForKey(key);
+          index.remember({ ...ref, range: new vscode.Range(targetLine, 0, targetLine, 0) });
+          void openPanel(ref.key);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          webview.post({ type: 'error', requestId: message.requestId, message: msg });
+        }
+      },
+    });
   }
 
   async function handlePanelMessage(
@@ -129,7 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
       providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
     }),
     vscode.commands.registerCommand(CREATE_COMMAND, (uri?: vscode.Uri, line?: number) =>
-      createJiraFromTodo(jira, uri, line),
+      openCreatePanel(uri, line),
     ),
     vscode.languages.registerHoverProvider(selector, createHoverProvider(registry, index)),
     vscode.languages.registerDocumentLinkProvider(selector, createLinkProvider(registry, index)),

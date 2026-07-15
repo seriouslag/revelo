@@ -153,9 +153,15 @@ export class JiraProvider implements Provider {
     },
   };
 
-  /** Default project key for new issues: first configured project key. */
-  defaultProjectKey(): string | undefined {
-    return this.configuredKeys()[0];
+  /** Build a bare-key reference (no range) for a known issue key. */
+  refForKey(issueKey: string): Omit<Reference, 'range'> {
+    return {
+      providerId: 'jira',
+      kind: 'issue',
+      raw: issueKey,
+      key: `jira:${issueKey}`,
+      fields: { issueKey },
+    };
   }
 
   /**
