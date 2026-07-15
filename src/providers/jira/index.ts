@@ -153,6 +153,45 @@ export class JiraProvider implements Provider {
     },
   };
 
+  /** Default project key for new issues: first configured project key. */
+  defaultProjectKey(): string | undefined {
+    return this.configuredKeys()[0];
+  }
+
+  /**
+   * Create a Jira issue from config (no reference). Resolves the site from
+   * revelo.jira.siteUrl. Returns the new issue key.
+   */
+  async createIssue(input: {
+    projectKey: string;
+    issueType: string;
+    summary: string;
+    description?: string;
+  }): Promise<string> {
+    const token = await this.auth.getToken();
+    if (!token) {
+      throw new Error('No Jira token configured — run "Revelo: Set Jira Token"');
+    }
+    const email = this.auth.email();
+    if (!email) {
+      throw new Error('Jira email not configured (revelo.jira.email)');
+    }
+    const siteUrl = vscode.workspace
+      .getConfiguration('revelo.jira')
+      .get<string>('siteUrl', '')
+      .replace(/\/+$/, '');
+    if (!siteUrl) {
+      throw new Error('Jira site not configured (revelo.jira.siteUrl)');
+    }
+    const client = new JiraClient({ siteUrl, email, token });
+    return client.createIssue({
+      projectKey: input.projectKey,
+      issueType: input.issueType,
+      summary: input.summary,
+      description: input.description ? textToAdf(input.description) : undefined,
+    });
+  }
+
   private toDetails(
     ref: Reference,
     issue: JiraIssue,

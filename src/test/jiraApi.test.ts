@@ -123,6 +123,34 @@ describe('JiraClient write operations', () => {
     expect(cfg.method).toBe('put');
     expect(JSON.parse(cfg.data as string)).toEqual({ fields: { description: adf } });
   });
+
+  it('POSTs a new issue and returns its key', async () => {
+    const rec = recorder({ id: '10001', key: 'ABC-42', self: 'https://a/rest/api/3/issue/10001' });
+    const key = await makeClient(rec).createIssue({
+      projectKey: 'ABC',
+      issueType: 'Task',
+      summary: 'Fix the thing',
+    });
+    expect(key).toBe('ABC-42');
+    const cfg = rec.calls[0];
+    expect(cfg.url).toContain('/issue');
+    expect(cfg.method).toBe('post');
+    expect(JSON.parse(cfg.data as string)).toEqual({
+      fields: { project: { key: 'ABC' }, issuetype: { name: 'Task' }, summary: 'Fix the thing' },
+    });
+  });
+
+  it('includes an ADF description when provided', async () => {
+    const rec = recorder({ id: '1', key: 'ABC-43', self: 's' });
+    const adf = { type: 'doc', version: 1, content: [] };
+    await makeClient(rec).createIssue({
+      projectKey: 'ABC',
+      issueType: 'Bug',
+      summary: 'Boom',
+      description: adf,
+    });
+    expect(JSON.parse(rec.calls[0].data as string).fields.description).toEqual(adf);
+  });
 });
 
 describe('JiraClient.getMyPermissions', () => {

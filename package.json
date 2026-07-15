@@ -72,6 +72,10 @@
       {
         "command": "revelo.clearJiraToken",
         "title": "Revelo: Clear Jira Token (dev)"
+      },
+      {
+        "command": "revelo.createJiraFromTodo",
+        "title": "Revelo: Create Jira Ticket from TODO"
       }
     ],
     "menus": {
@@ -153,6 +157,34 @@
           },
           "default": [],
           "description": "Project keys to treat as Jira issues (e.g. [\"ABC\", \"PROJ\"]). When set, only these prefixes match bare keys — prevents false positives like UTF-8. Leave empty to match any key not on the denylist."
+        },
+        "revelo.jira.requireTicketForTodo": {
+          "type": "boolean",
+          "default": false,
+          "description": "Warn when a TODO comment has no linked Jira ticket. Offers a quick fix to create one. Requires Jira to be enabled."
+        },
+        "revelo.jira.todoKeywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "TODO",
+            "FIXME"
+          ],
+          "description": "Comment keywords that trigger TODO detection (case-insensitive)."
+        },
+        "revelo.jira.issueTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "Task",
+            "Bug",
+            "Story"
+          ],
+          "description": "Issue types offered when creating a Jira ticket from a TODO. The first is the default."
         },
         "revelo.cache.ttlSeconds": {
           "type": "number",

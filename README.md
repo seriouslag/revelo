@@ -12,6 +12,7 @@ Works in VS Code and Cursor.
 - **GitHub** — issues, PRs, and discussions. Detects `#123`, `GH-123`, `owner/repo#123`, and full `github.com` URLs (including GitHub Enterprise). Shows title, state (open/closed/merged/draft with the correct color), author, labels, and a body snippet.
 - **Sentry** — issues by URL or short ID (`PROJECT-42`). Shows title, level, status, event/user counts, and last-seen date. Region-aware (US/EU/self-hosted).
 - **Jira** — issues by key (`ABC-123`) or Cloud/Server URL. Shows summary, status, type, priority, assignee, and description (Atlassian Document Format rendered inline).
+- **Create Jira tickets from TODOs** — with `revelo.jira.requireTicketForTodo` on, `TODO`/`FIXME` comments without a linked ticket get a warning and a quick fix that creates a Jira issue and writes its key back into the comment (`// TODO(ABC-123): …`).
 
 References are detected only inside **comments** (per-language) and **Markdown/plaintext** prose, so ordinary code isn't matched.
 
@@ -66,6 +67,7 @@ Bare `#123` resolves against the workspace's `origin` git remote, or set `revelo
 | Revelo: Set GitHub Token | Store a GitHub PAT |
 | Revelo: Set Sentry Token | Store a Sentry auth token |
 | Revelo: Set Jira Token | Store a Jira API token |
+| Revelo: Create Jira Ticket from TODO | Create a Jira issue from the TODO on the current line |
 | Revelo: Clear Cache | Clear cached reference details |
 
 ## Settings
@@ -83,6 +85,9 @@ Bare `#123` resolves against the workspace's `origin` git remote, or set `revelo
 | `revelo.jira.siteUrl` | `""` | Jira Cloud site URL |
 | `revelo.jira.email` | `""` | Atlassian account email |
 | `revelo.jira.projectKeys` | `[]` | Project keys to match (empty = any non-denylisted) |
+| `revelo.jira.requireTicketForTodo` | `false` | Warn on TODO comments with no linked Jira ticket |
+| `revelo.jira.todoKeywords` | `["TODO", "FIXME"]` | Comment keywords that trigger TODO detection |
+| `revelo.jira.issueTypes` | `["Task", "Bug", "Story"]` | Issue types offered when creating from a TODO (first is default) |
 | `revelo.cache.ttlSeconds` | `300` | How long fetched details are cached |
 
 ## Editing

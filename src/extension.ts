@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { ProviderRegistry } from './core/registry';
 import { ReferenceIndex } from './core/referenceIndex';
 import { createHoverProvider, createLinkProvider } from './core/scanner';
+import { registerTodoDiagnostics } from './core/todoDiagnostics';
+import { createTodoCodeActionProvider, createJiraFromTodo, CREATE_COMMAND } from './core/todoActions';
 import { WebviewManager } from './core/webviewManager';
 import type { InboundMessage } from './core/webviewProtocol';
 import type { Provider, ProviderId, Reference } from './core/types';
@@ -122,6 +124,13 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   context.subscriptions.push(
+    ...registerTodoDiagnostics(),
+    vscode.languages.registerCodeActionsProvider(selector, createTodoCodeActionProvider(), {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+    }),
+    vscode.commands.registerCommand(CREATE_COMMAND, (uri?: vscode.Uri, line?: number) =>
+      createJiraFromTodo(jira, uri, line),
+    ),
     vscode.languages.registerHoverProvider(selector, createHoverProvider(registry, index)),
     vscode.languages.registerDocumentLinkProvider(selector, createLinkProvider(registry, index)),
     vscode.commands.registerCommand('revelo.openPanel', openPanel),

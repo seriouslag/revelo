@@ -1,4 +1,5 @@
 import { Version3Client } from 'jira.js';
+import type { Version3Models } from 'jira.js';
 import type { AxiosAdapter } from 'axios';
 import type { AdfNode } from './adf';
 
@@ -179,6 +180,32 @@ export class JiraClient {
   async updateDescription(key: string, description: AdfNode): Promise<void> {
     try {
       await this.client.issues.editIssue({ issueIdOrKey: key, fields: { description } });
+    } catch (error) {
+      mapError(error);
+    }
+  }
+
+  /** Create an issue; returns the new issue key (e.g. "ABC-123"). */
+  async createIssue(input: {
+    projectKey: string;
+    issueType: string;
+    summary: string;
+    description?: AdfNode;
+  }): Promise<string> {
+    try {
+      const created = await this.client.issues.createIssue({
+        fields: {
+          project: { key: input.projectKey },
+          issuetype: { name: input.issueType },
+          summary: input.summary,
+          // jira.js types description as its own Document shape; our AdfNode is
+          // structurally compatible but has a looser `version`, so cast here.
+          ...(input.description
+            ? { description: input.description as unknown as Version3Models.Document }
+            : {}),
+        },
+      });
+      return created.key;
     } catch (error) {
       mapError(error);
     }
