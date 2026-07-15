@@ -29,8 +29,16 @@ const webviewOptions = {
 };
 
 if (isWatch) {
-  await watch(extensionOptions);
-  await watch(webviewOptions);
+  const watcher = watch([extensionOptions, webviewOptions]);
+  watcher.on('event', (event) => {
+    if (event.code === 'START') {
+      console.log('[watch] build started');
+    } else if (event.code === 'END') {
+      console.log('[watch] build finished');
+    } else if (event.code === 'ERROR') {
+      console.error('[watch] build error:', event.error);
+    }
+  });
 } else {
   await build(extensionOptions);
   await build(webviewOptions);
