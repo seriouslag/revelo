@@ -1,3 +1,6 @@
+import { getOrganizationIssueQueryResponseSchema } from './gen/zod/getOrganizationIssueSchema';
+import { resolveOrganizationShortIdQueryResponseSchema } from './gen/zod/resolveOrganizationShortIdSchema';
+
 export interface SentryProjectRef {
   id?: string;
   name?: string;
@@ -66,11 +69,27 @@ export interface SentryClientOptions {
   fetchImpl?: typeof fetch;
 }
 
+// A zod schema exposes safeParse; we validate leniently (see validate()).
+interface LenientSchema {
+  safeParse(data: unknown): { success: boolean; error?: unknown };
+}
+
 export class SentryClient {
   private readonly doFetch: typeof fetch;
 
   constructor(private readonly options: SentryClientOptions) {
     this.doFetch = options.fetchImpl ?? fetch;
+  }
+
+  // Validate against the generated schema for observability only. Sentry's real
+  // payloads don't always satisfy every field the spec marks required, so a
+  // failed parse must not break rendering — we warn and use the raw data.
+  private validate<T>(schema: LenientSchema, data: unknown, label: string): T {
+    const result = schema.safeParse(data);
+    if (!result.success) {
+      console.warn(`Revelo: Sentry ${label} response did not match schema`, result.error);
+    }
+    return data as T;
   }
 
   private async request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -108,13 +127,19 @@ export class SentryClient {
     return (text ? JSON.parse(text) : undefined) as T;
   }
 
-  fetchIssue(orgSlug: string, issueId: string): Promise<SentryIssue> {
-    return this.request<SentryIssue>(`/organizations/${orgSlug}/issues/${issueId}/`);
+  async fetchIssue(orgSlug: string, issueId: string): Promise<SentryIssue> {
+    const data = await this.request<unknown>(`/organizations/${orgSlug}/issues/${issueId}/`);
+    return this.validate<SentryIssue>(getOrganizationIssueQueryResponseSchema, data, 'issue');
   }
 
-  resolveShortId(orgSlug: string, shortId: string): Promise<ShortIdResolution> {
-    return this.request<ShortIdResolution>(
+  async resolveShortId(orgSlug: string, shortId: string): Promise<ShortIdResolution> {
+    const data = await this.request<unknown>(
       `/organizations/${orgSlug}/shortids/${encodeURIComponent(shortId)}/`,
+    );
+    return this.validate<ShortIdResolution>(
+      resolveOrganizationShortIdQueryResponseSchema,
+      data,
+      'shortId',
     );
   }
 
