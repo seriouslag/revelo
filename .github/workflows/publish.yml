@@ -14,6 +14,10 @@ on:
         type: boolean
         default: false
 
+# Needed for the "Create GitHub release" step to push a release + upload assets.
+permissions:
+  contents: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
