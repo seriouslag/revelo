@@ -181,6 +181,7 @@
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
-    "adf-to-md": "^1.2.1"
+    "adf-to-md": "^1.2.1",
+    "jira.js": "^5.4.0"
   }
 }

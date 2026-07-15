@@ -1,3 +1,5 @@
+import { Version3Client } from 'jira.js';
+import type { AxiosAdapter } from 'axios';
 import type { AdfNode } from './adf';
 
 export interface JiraStatus {
@@ -63,68 +65,54 @@ export interface JiraClientOptions {
   siteUrl: string; // e.g. https://acme.atlassian.net
   email: string;
   token: string;
-  fetchImpl?: typeof fetch;
+  // Injectable axios adapter for testing; production uses jira.js's default.
+  adapter?: AxiosAdapter;
 }
 
-const ISSUE_FIELDS =
-  'summary,status,assignee,reporter,priority,issuetype,description,created,updated,labels';
+const ISSUE_FIELDS = [
+  'summary',
+  'status',
+  'assignee',
+  'reporter',
+  'priority',
+  'issuetype',
+  'description',
+  'created',
+  'updated',
+  'labels',
+];
+
+// jira.js raises HttpException with a numeric `.status`; map onto our errors.
+function mapError(error: unknown): never {
+  const status = (error as { status?: number; response?: { status?: number } }).status
+    ?? (error as { response?: { status?: number } }).response?.status;
+  if (status === 401 || status === 403) {
+    throw new JiraAuthError();
+  }
+  if (status === 404) {
+    throw new JiraNotFoundError();
+  }
+  throw error instanceof Error ? error : new Error(String(error));
+}
 
 export class JiraClient {
-  private readonly doFetch: typeof fetch;
+  private readonly client: Version3Client;
 
-  constructor(private readonly options: JiraClientOptions) {
-    this.doFetch = options.fetchImpl ?? fetch;
-  }
-
-  private authHeader(): string {
-    const raw = `${this.options.email}:${this.options.token}`;
-    // btoa is available in the extension host (Node 18+/browser).
-    const encoded =
-      typeof btoa === 'function'
-        ? btoa(raw)
-        : Buffer.from(raw, 'utf-8').toString('base64');
-    return `Basic ${encoded}`;
-  }
-
-  private async request<T>(
-    path: string,
-    init?: { method?: string; body?: unknown },
-  ): Promise<T> {
-    const base = this.options.siteUrl.replace(/\/+$/, '');
-    const headers: Record<string, string> = {
-      Authorization: this.authHeader(),
-      Accept: 'application/json',
-    };
-    if (init?.body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-    }
-    const res = await this.doFetch(`${base}${path}`, {
-      method: init?.method ?? 'GET',
-      headers,
-      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+  constructor(options: JiraClientOptions) {
+    this.client = new Version3Client({
+      host: options.siteUrl.replace(/\/+$/, ''),
+      authentication: { basic: { email: options.email, apiToken: options.token } },
+      baseRequestConfig: options.adapter ? { adapter: options.adapter } : undefined,
     });
-
-    if (res.status === 401 || res.status === 403) {
-      throw new JiraAuthError();
-    }
-    if (res.status === 404) {
-      throw new JiraNotFoundError();
-    }
-    if (!res.ok) {
-      throw new Error(`Jira API error ${res.status}`);
-    }
-    // 204 No Content (writes) has no JSON body.
-    if (res.status === 204) {
-      return undefined as T;
-    }
-    const text = await res.text();
-    return (text ? JSON.parse(text) : undefined) as T;
   }
 
-  fetchIssue(key: string): Promise<JiraIssue> {
-    return this.request<JiraIssue>(
-      `/rest/api/3/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS}`,
-    );
+  async fetchIssue(key: string): Promise<JiraIssue> {
+    try {
+      const issue = await this.client.issues.getIssue({ issueIdOrKey: key, fields: ISSUE_FIELDS });
+      return issue as unknown as JiraIssue;
+    } catch (error) {
+      mapError(error);
+    }
   }
 
   /**
@@ -133,51 +121,66 @@ export class JiraClient {
    * each control independently.
    */
   async getMyPermissions(key: string): Promise<JiraPermissions> {
-    const perms = 'EDIT_ISSUES,ASSIGN_ISSUES,TRANSITION_ISSUES';
-    const res = await this.request<{
-      permissions?: Record<string, { havePermission?: boolean }>;
-    }>(`/rest/api/3/mypermissions?issueKey=${encodeURIComponent(key)}&permissions=${perms}`);
-    const p = res.permissions ?? {};
-    return {
-      edit: Boolean(p.EDIT_ISSUES?.havePermission),
-      assign: Boolean(p.ASSIGN_ISSUES?.havePermission),
-      transition: Boolean(p.TRANSITION_ISSUES?.havePermission),
-    };
+    try {
+      const res = await this.client.permissions.getMyPermissions({
+        issueKey: key,
+        permissions: 'EDIT_ISSUES,ASSIGN_ISSUES,TRANSITION_ISSUES',
+      });
+      const p = (res.permissions ?? {}) as Record<string, { havePermission?: boolean }>;
+      return {
+        edit: Boolean(p.EDIT_ISSUES?.havePermission),
+        assign: Boolean(p.ASSIGN_ISSUES?.havePermission),
+        transition: Boolean(p.TRANSITION_ISSUES?.havePermission),
+      };
+    } catch (error) {
+      mapError(error);
+    }
   }
 
   async getTransitions(key: string): Promise<JiraTransition[]> {
-    const res = await this.request<{ transitions: JiraTransition[] }>(
-      `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
-    );
-    return res.transitions ?? [];
+    try {
+      const res = await this.client.issues.getTransitions({ issueIdOrKey: key });
+      return (res.transitions ?? []) as JiraTransition[];
+    } catch (error) {
+      mapError(error);
+    }
   }
 
-  doTransition(key: string, transitionId: string): Promise<void> {
-    return this.request<void>(`/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
-      method: 'POST',
-      body: { transition: { id: transitionId } },
-    });
+  async doTransition(key: string, transitionId: string): Promise<void> {
+    try {
+      await this.client.issues.doTransition({ issueIdOrKey: key, transition: { id: transitionId } });
+    } catch (error) {
+      mapError(error);
+    }
   }
 
   async getAssignableUsers(key: string, query: string): Promise<JiraAssignableUser[]> {
-    const params = new URLSearchParams({ issueKey: key, query, maxResults: '50' });
-    return this.request<JiraAssignableUser[]>(
-      `/rest/api/3/user/assignable/search?${params.toString()}`,
-    );
+    try {
+      const users = await this.client.userSearch.findAssignableUsers({
+        issueKey: key,
+        query,
+        maxResults: 50,
+      });
+      return users as unknown as JiraAssignableUser[];
+    } catch (error) {
+      mapError(error);
+    }
   }
 
   /** Assign to an accountId, or pass null to unassign. */
-  updateAssignee(key: string, accountId: string | null): Promise<void> {
-    return this.request<void>(`/rest/api/3/issue/${encodeURIComponent(key)}/assignee`, {
-      method: 'PUT',
-      body: { accountId },
-    });
+  async updateAssignee(key: string, accountId: string | null): Promise<void> {
+    try {
+      await this.client.issues.assignIssue({ issueIdOrKey: key, accountId });
+    } catch (error) {
+      mapError(error);
+    }
   }
 
-  updateDescription(key: string, description: AdfNode): Promise<void> {
-    return this.request<void>(`/rest/api/3/issue/${encodeURIComponent(key)}`, {
-      method: 'PUT',
-      body: { fields: { description } },
-    });
+  async updateDescription(key: string, description: AdfNode): Promise<void> {
+    try {
+      await this.client.issues.editIssue({ issueIdOrKey: key, fields: { description } });
+    } catch (error) {
+      mapError(error);
+    }
   }
 }
