@@ -1,0 +1,72 @@
+name: Pre-release
+
+# Every merge to main publishes a pre-release build. Per VS Code convention,
+# pre-releases use an ODD minor version (0.1.x, 0.3.x). The version is derived
+# here and NOT committed back — package.json holds the baseline; CI stamps the
+# build number from the commit count so each pre-release is monotonic.
+on:
+  push:
+    branches: [main]
+
+# Avoid overlapping publishes if several commits land quickly.
+concurrency:
+  group: pre-release
+  cancel-in-progress: false
+
+jobs:
+  pre-release:
+    runs-on: ubuntu-latest
+    # Skip commits that only touch docs/CI to avoid churning pre-release versions.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release)') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # See ci.yml: npm install (not ci) to tolerate rolldown's per-platform
+      # optional native deps.
+      - run: npm install --no-audit --no-fund
+
+      - run: npm run check-types
+      - run: npm run lint
+      - run: npm test
+
+      - name: Derive pre-release version
+        id: version
+        # Base minor+1 (forced odd), patch = total commit count for monotonicity.
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          MAJOR=$(echo "$BASE" | cut -d. -f1)
+          MINOR=$(echo "$BASE" | cut -d. -f2)
+          # Force an odd minor for the pre-release lane.
+          if [ $((MINOR % 2)) -eq 0 ]; then MINOR=$((MINOR + 1)); fi
+          PATCH=$(git rev-list --count HEAD)
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Pre-release version: $VERSION"
+
+      - name: Set version
+        run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Package (pre-release)
+        run: npx --yes @vscode/vsce package --pre-release --no-dependencies -o revelo.vsix
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish --pre-release --no-dependencies --packagePath revelo.vsix
+
+      - name: Publish to Open VSX (Cursor)
+        run: npx --yes ovsx publish revelo.vsix --pre-release -p ${{ secrets.OVSX_PAT }}
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: revelo-prerelease-vsix
+          path: revelo.vsix
+          if-no-files-found: error

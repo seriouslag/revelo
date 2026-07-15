@@ -2,7 +2,7 @@
   "name": "revelo",
   "displayName": "Revelo",
   "description": "Reveal and edit GitHub, Sentry, and Jira issues from references in your code comments and Markdown.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "seriouslag",
   "license": "MIT",
   "engines": {

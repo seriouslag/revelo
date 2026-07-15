@@ -1,18 +1,14 @@
-name: Publish
+name: Publish (stable)
 
-# Manual only for now — trigger from the Actions tab.
+# Stable releases are cut by pushing a version tag, e.g. `git tag v0.2.0`.
+# Per VS Code convention stable uses an EVEN minor version; the tag must match
+# package.json's version. Also dispatchable manually for re-runs.
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      versionBump:
-        description: "Version bump before publishing"
-        type: choice
-        default: none
-        options:
-          - none
-          - patch
-          - minor
-          - major
       dryRun:
         description: "Package only, do not publish"
         type: boolean
@@ -38,9 +34,23 @@ jobs:
       - run: npm run lint
       - run: npm test
 
-      - name: Bump version
-        if: ${{ inputs.versionBump != 'none' }}
-        run: npm version ${{ inputs.versionBump }} --no-git-tag-version
+      - name: Validate version and tag
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          if [ $((MINOR % 2)) -ne 0 ]; then
+            echo "::error::Stable version $VERSION must use an even minor (VS Code convention)."
+            exit 1
+          fi
+          # On a tag push, ensure the tag matches package.json.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+            if [ "$TAG" != "v$VERSION" ]; then
+              echo "::error::Tag $TAG does not match package.json version v$VERSION."
+              exit 1
+            fi
+          fi
+          echo "Stable version: $VERSION"
 
       - name: Package
         run: npx --yes @vscode/vsce package --no-dependencies -o revelo.vsix
@@ -54,6 +64,12 @@ jobs:
       - name: Publish to Open VSX (Cursor)
         if: ${{ !inputs.dryRun }}
         run: npx --yes ovsx publish revelo.vsix -p ${{ secrets.OVSX_PAT }}
+
+      - name: Create GitHub release
+        if: ${{ github.ref_type == 'tag' && !inputs.dryRun }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" revelo.vsix --title "${{ github.ref_name }}" --generate-notes
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v7

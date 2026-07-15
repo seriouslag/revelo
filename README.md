@@ -111,6 +111,22 @@ The detail panel (Cmd/Ctrl+click a reference) can edit issues, not just view the
 - **Jira** — change status (transition), set assignee, edit description. Each control appears only if you have the matching permission on that issue (`TRANSITION_ISSUES`, `ASSIGN_ISSUES`, `EDIT_ISSUES`).
 - **Sentry** — change status (resolve/ignore/unresolve). Off by default; enable with `revelo.sentry.enableEditing` and a token with `event:write`.
 
+## Releasing
+
+Two channels ship from this repo, following the VS Code Marketplace convention (a single extension can't use semver pre-release tags, so channels are split by minor-version parity):
+
+- **Pre-release** — every merge to `main` auto-publishes a pre-release build (`.github/workflows/pre-release.yml`). These use **odd** minor versions (`0.1.x`, `0.3.x`); the patch is the commit count, so builds are monotonic. Users opt in via *Switch to Pre-Release Version* in VS Code.
+- **Stable** — cut by pushing a version tag (`.github/workflows/publish.yml`). These use **even** minor versions (`0.2.x`, `0.4.x`). The tag must match `package.json` and the CI validates the even-minor rule.
+
+To cut a stable release:
+
+```sh
+npm version minor   # bumps to the next even minor, creates the v* tag
+git push --follow-tags
+```
+
+Both channels publish to the VS Code Marketplace and Open VSX (Cursor), gated behind type-check + lint + tests. PR titles are linted for [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, …) so squash-merges keep history parseable.
+
 ## Privacy
 
 Tokens are stored in VS Code's encrypted **SecretStorage**, never in settings files. Reference details are fetched directly from your configured GitHub/Sentry/Jira instances and cached in memory only.
