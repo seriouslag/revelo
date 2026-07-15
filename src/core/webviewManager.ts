@@ -118,6 +118,8 @@ export class WebviewManager {
   button:disabled { opacity: 0.5; cursor: default; }
   textarea { width: 100%; min-height: 120px; resize: vertical; white-space: pre-wrap;
              font-family: var(--vscode-editor-font-family); }
+  .summary-input { flex: 1; min-height: 0; resize: none; overflow: hidden;
+                   font-family: var(--vscode-font-family); line-height: 1.4; }
   .edit-body { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--vscode-panel-border); }
   .combobox { position: relative; display: inline-block; min-width: 260px; }
   .combobox input { width: 100%; box-sizing: border-box; }
@@ -131,6 +133,13 @@ export class WebviewManager {
     background: var(--vscode-list-activeSelectionBackground);
     color: var(--vscode-list-activeSelectionForeground); }
   .combobox-list li.empty { color: var(--vscode-descriptionForeground); cursor: default; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 8px;
+          border-radius: 20px; font-size: 0.82em; background: var(--vscode-badge-background);
+          color: var(--vscode-badge-foreground); }
+  .chip button { background: none; border: none; color: inherit; cursor: pointer; padding: 0 2px;
+                 font-size: 1.1em; line-height: 1; }
+  .chip button:hover { background: none; opacity: 0.7; }
   .label-editor { margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--vscode-panel-border);
                   border-radius: 4px; max-width: 400px; }
   .label-search { width: 100%; box-sizing: border-box; margin-bottom: 8px; }

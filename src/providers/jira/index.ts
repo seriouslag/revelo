@@ -3,7 +3,14 @@ import type { EditAction, EditOption, ItemDetails, Provider, Reference } from '.
 import { ReferenceCache } from '../../core/cache';
 import { escapeHtml, escapeMarkdown, formatDate, stateEmoji } from '../github/render';
 import { JIRA_MATCHERS, parseJiraMatch, projectKeyOf, KEY_DENYLIST } from './matchers';
-import { JiraClient, type JiraIssue, type JiraPermissions } from './api';
+import {
+  JiraClient,
+  type JiraIssue,
+  type JiraPermissions,
+  type JiraPriority,
+  type JiraAssignableUser,
+  type JiraEpic,
+} from './api';
 import { JiraAuth } from './auth';
 import { adfToMarkdown, markdownToHtml, textToAdf, type AdfNode } from './adf';
 import { actorName, deriveJiraState } from './render';
@@ -164,16 +171,17 @@ export class JiraProvider implements Provider {
     };
   }
 
-  /**
-   * Create a Jira issue from config (no reference). Resolves the site from
-   * revelo.jira.siteUrl. Returns the new issue key.
-   */
-  async createIssue(input: {
-    projectKey: string;
-    issueType: string;
-    summary: string;
-    description?: string;
-  }): Promise<string> {
+  /** Browser URL for an issue key, using the configured site. */
+  issueUrl(issueKey: string): string {
+    const siteUrl = vscode.workspace
+      .getConfiguration('revelo.jira')
+      .get<string>('siteUrl', '')
+      .replace(/\/+$/, '');
+    return `${siteUrl}/browse/${issueKey}`;
+  }
+
+  /** Build a client from config (no reference), for create-form operations. */
+  private async configClient(): Promise<JiraClient> {
     const token = await this.auth.getToken();
     if (!token) {
       throw new Error('No Jira token configured — run "Revelo: Set Jira Token"');
@@ -189,13 +197,55 @@ export class JiraProvider implements Provider {
     if (!siteUrl) {
       throw new Error('Jira site not configured (revelo.jira.siteUrl)');
     }
-    const client = new JiraClient({ siteUrl, email, token });
+    return new JiraClient({ siteUrl, email, token });
+  }
+
+  /**
+   * Create a Jira issue from config (no reference). Resolves the site from
+   * revelo.jira.siteUrl. Returns the new issue key.
+   */
+  async createIssue(input: {
+    projectKey: string;
+    issueType: string;
+    summary: string;
+    description?: string;
+    labels?: string[];
+    priorityId?: string;
+    dueDate?: string;
+    parentKey?: string;
+    assigneeAccountId?: string;
+  }): Promise<string> {
+    const client = await this.configClient();
     return client.createIssue({
       projectKey: input.projectKey,
       issueType: input.issueType,
       summary: input.summary,
       description: input.description ? textToAdf(input.description) : undefined,
+      labels: input.labels,
+      priorityId: input.priorityId,
+      dueDate: input.dueDate,
+      parentKey: input.parentKey,
+      assigneeAccountId: input.assigneeAccountId,
     });
+  }
+
+  async getPriorities(): Promise<JiraPriority[]> {
+    return (await this.configClient()).getPriorities();
+  }
+
+  async getAssignableUsersForProject(
+    projectKey: string,
+    query: string,
+  ): Promise<JiraAssignableUser[]> {
+    return (await this.configClient()).getAssignableUsersForProject(projectKey, query);
+  }
+
+  async searchEpics(projectKey: string): Promise<JiraEpic[]> {
+    return (await this.configClient()).searchEpics(projectKey);
+  }
+
+  async getLabels(): Promise<string[]> {
+    return (await this.configClient()).getLabels();
   }
 
   private toDetails(

@@ -151,6 +151,70 @@ describe('JiraClient write operations', () => {
     });
     expect(JSON.parse(rec.calls[0].data as string).fields.description).toEqual(adf);
   });
+
+  it('includes optional fields (labels, priority, due date, parent, assignee)', async () => {
+    const rec = recorder({ id: '1', key: 'ABC-44', self: 's' });
+    await makeClient(rec).createIssue({
+      projectKey: 'ABC',
+      issueType: 'Task',
+      summary: 'Full',
+      labels: ['a', 'b'],
+      priorityId: '3',
+      dueDate: '2026-08-01',
+      parentKey: 'ABC-1',
+      assigneeAccountId: 'acc-1',
+    });
+    const fields = JSON.parse(rec.calls[0].data as string).fields;
+    expect(fields.labels).toEqual(['a', 'b']);
+    expect(fields.priority).toEqual({ id: '3' });
+    expect(fields.duedate).toBe('2026-08-01');
+    expect(fields.parent).toEqual({ key: 'ABC-1' });
+    expect(fields.assignee).toEqual({ id: 'acc-1' });
+  });
+
+  it('omits optional fields when not provided', async () => {
+    const rec = recorder({ id: '1', key: 'ABC-45', self: 's' });
+    await makeClient(rec).createIssue({ projectKey: 'ABC', issueType: 'Task', summary: 'Bare' });
+    const fields = JSON.parse(rec.calls[0].data as string).fields;
+    expect(fields).not.toHaveProperty('labels');
+    expect(fields).not.toHaveProperty('priority');
+    expect(fields).not.toHaveProperty('parent');
+    expect(fields).not.toHaveProperty('assignee');
+  });
+});
+
+describe('JiraClient create-form option feeds', () => {
+  it('lists priorities', async () => {
+    const rec = recorder([{ id: '1', name: 'High' }, { id: '2', name: 'Low' }]);
+    const priorities = await makeClient(rec).getPriorities();
+    expect(priorities).toEqual([{ id: '1', name: 'High' }, { id: '2', name: 'Low' }]);
+    expect(rec.calls[0].url).toContain('/priority');
+  });
+
+  it('searches assignable users by project', async () => {
+    const rec = recorder([{ accountId: 'a1', displayName: 'Jane' }]);
+    const users = await makeClient(rec).getAssignableUsersForProject('ABC', 'jan');
+    expect(users[0].accountId).toBe('a1');
+    expect(rec.calls[0].url).toContain('/user/assignable/search');
+    expect((rec.calls[0].params as { project?: string }).project).toBe('ABC');
+  });
+
+  it('lists a project\'s epics via the enhanced search endpoint', async () => {
+    const rec = recorder({ issues: [{ key: 'FP-1', fields: { summary: 'Epic A' } }] });
+    const epics = await makeClient(rec).searchEpics('FP');
+    expect(epics).toEqual([{ key: 'FP-1', summary: 'Epic A' }]);
+    expect(rec.calls[0].url).toContain('/search/jql');
+    const jql = (rec.calls[0].params as { jql?: string }).jql ?? '';
+    expect(jql).toContain('project = "FP"');
+    expect(jql).toContain('issuetype = Epic');
+  });
+
+  it('lists labels', async () => {
+    const rec = recorder({ values: ['backend', 'frontend', 'tech-debt'], total: 3 });
+    const labels = await makeClient(rec).getLabels();
+    expect(labels).toEqual(['backend', 'frontend', 'tech-debt']);
+    expect(rec.calls[0].url).toContain('/label');
+  });
 });
 
 describe('JiraClient.getMyPermissions', () => {

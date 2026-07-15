@@ -11,8 +11,8 @@ import {
 } from './core/todoActions';
 import { WebviewManager } from './core/webviewManager';
 import { renderCreatePanel } from './providers/jira/createPanel';
-import type { InboundMessage } from './core/webviewProtocol';
-import type { Provider, ProviderId, Reference } from './core/types';
+import type { CreateOptionKind, InboundMessage } from './core/webviewProtocol';
+import type { EditOption, Provider, ProviderId, Reference } from './core/types';
 import { GitHubProvider } from './providers/github';
 import { SentryProvider } from './providers/sentry';
 import { JiraProvider } from './providers/jira';
@@ -74,11 +74,32 @@ export function activate(context: vscode.ExtensionContext): void {
     const projectKeys = cfg.get<string[]>('projectKeys', []);
     const issueTypes = cfg.get<string[]>('issueTypes', ['Task', 'Bug', 'Story']);
 
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(targetUri);
+    const relPath = workspaceFolder
+      ? targetUri.path.slice(workspaceFolder.uri.path.length + 1)
+      : targetUri.fsPath;
+    const description = `Created from a TODO in ${relPath}:${targetLine + 1}\n\n${document.lineAt(targetLine).text.trim()}`;
+
     webview.show({
       title: 'Create Jira ticket',
       renderBody: () =>
-        renderCreatePanel({ projectKeys, issueTypes, summary: todo.summary || todo.keyword }),
+        renderCreatePanel({
+          projectKeys,
+          issueTypes,
+          summary: todo.summary || todo.keyword,
+          description,
+        }),
       onMessage: async (message) => {
+        if (message.type === 'createOptions') {
+          try {
+            const options = await createOptions(jira, message.kind, message.projectKey, message.query);
+            webview.post({ type: 'options', requestId: message.requestId, options });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            webview.post({ type: 'error', requestId: message.requestId, message: msg });
+          }
+          return;
+        }
         if (message.type !== 'createIssue') {
           return;
         }
@@ -90,6 +111,14 @@ export function activate(context: vscode.ExtensionContext): void {
           const ref = jira.refForKey(key);
           index.remember({ ...ref, range: new vscode.Range(targetLine, 0, targetLine, 0) });
           void openPanel(ref.key);
+          const viewTicket = 'View ticket';
+          void vscode.window
+            .showInformationMessage(`Revelo: created ${key}`, viewTicket)
+            .then((choice) => {
+              if (choice === viewTicket) {
+                void vscode.env.openExternal(vscode.Uri.parse(jira.issueUrl(key)));
+              }
+            });
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           webview.post({ type: 'error', requestId: message.requestId, message: msg });
@@ -207,6 +236,33 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {}
+
+// Feed the create form's dynamic controls: priorities, project assignees, and
+// epic search. Returns generic {id,label} options the combobox/select render.
+async function createOptions(
+  jira: JiraProvider,
+  kind: CreateOptionKind,
+  projectKey: string,
+  query: string,
+): Promise<EditOption[]> {
+  if (kind === 'priority') {
+    const priorities = await jira.getPriorities();
+    return priorities.map((p) => ({ id: p.id, label: p.name }));
+  }
+  if (kind === 'createAssignee') {
+    const users = await jira.getAssignableUsersForProject(projectKey, query);
+    return users.map((u) => ({
+      id: u.accountId,
+      label: u.emailAddress ? `${u.displayName} (${u.emailAddress})` : u.displayName,
+    }));
+  }
+  if (kind === 'label') {
+    const labels = await jira.getLabels();
+    return labels.map((l) => ({ id: l, label: l }));
+  }
+  const epics = await jira.searchEpics(projectKey);
+  return epics.map((e) => ({ id: e.key, label: `${e.key} — ${e.summary}` }));
+}
 
 async function warnMissingTokens(
   context: vscode.ExtensionContext,

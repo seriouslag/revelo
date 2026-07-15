@@ -44,6 +44,15 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
     return res.type === 'options' ? res.options : [];
   }
 
+  async function requestCreateOptions(
+    kind: 'priority' | 'createAssignee' | 'epic' | 'label',
+    projectKey: string,
+    query: string,
+  ): Promise<EditOption[]> {
+    const res = await request({ type: 'createOptions', kind, projectKey, query });
+    return res.type === 'options' ? res.options : [];
+  }
+
   function setStatus(el: Element | null, text: string, kind?: 'ok' | 'err'): void {
     if (!el) return;
     el.textContent = text;
@@ -345,8 +354,252 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
     );
     const typeEl = document.querySelector<HTMLSelectElement>('[data-create="type"]');
     const summaryEl = document.querySelector<HTMLTextAreaElement>('[data-create="summary"]');
+    const descEl = document.querySelector<HTMLTextAreaElement>('[data-create="description"]');
+    const priorityEl = document.querySelector<HTMLSelectElement>('[data-create="priority"]');
+    const dueDateEl = document.querySelector<HTMLInputElement>('[data-create="dueDate"]');
+
+    const currentProject = (): string => projectEl?.value.trim() ?? '';
+
+    // Auto-grow the summary textarea to fit its content.
+    if (summaryEl) {
+      const autogrow = (): void => {
+        summaryEl.style.height = 'auto';
+        summaryEl.style.height = `${summaryEl.scrollHeight}px`;
+      };
+      summaryEl.addEventListener('input', autogrow);
+      // Enter submits rather than adding a newline (summary is single-line).
+      summaryEl.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          createBtn.click();
+        }
+      });
+      setTimeout(autogrow, 0);
+    }
+
+    // A search combobox that resolves a selected id (assignee, epic parent).
+    // localFilter: fetch options once and filter client-side (epics — JQL can't
+    // do partial-key matching). Otherwise search the server per keystroke.
+    function wireCombobox(
+      field: 'createAssignee' | 'epic',
+      inputSel: string,
+      listSel: string,
+      localFilter: boolean,
+    ): () => string {
+      const input = document.querySelector<HTMLInputElement>(inputSel);
+      const list = document.querySelector<HTMLUListElement>(listSel);
+      let selectedId = '';
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let cache: EditOption[] | undefined;
+      let activeIdx = -1;
+      if (!input || !list) return () => selectedId;
+
+      const close = (): void => {
+        list.hidden = true;
+        activeIdx = -1;
+      };
+      const commit = (row: EditOption): void => {
+        selectedId = row.id;
+        input.value = row.id ? row.label : '';
+        close();
+      };
+      const highlight = (): void => {
+        list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === activeIdx));
+      };
+      const render = (items: EditOption[]): void => {
+        list.innerHTML = '';
+        activeIdx = -1;
+        const rows: EditOption[] = [{ id: '', label: 'None' }, ...items.slice(0, 50)];
+        for (const row of rows) {
+          const li = document.createElement('li');
+          li.textContent = row.label;
+          li.dataset.id = row.id;
+          li.addEventListener('mousedown', (ev) => {
+            ev.preventDefault();
+            commit(row);
+          });
+          list.appendChild(li);
+        }
+        list.hidden = false;
+      };
+      const search = (): void => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(async () => {
+          if (!currentProject()) {
+            setStatus(status, 'Select a project first', 'err');
+            return;
+          }
+          const q = input.value.trim();
+          try {
+            if (localFilter) {
+              if (!cache) cache = await requestCreateOptions(field, currentProject(), '');
+              const ql = q.toLowerCase();
+              render(ql ? cache.filter((o) => o.label.toLowerCase().includes(ql)) : cache);
+            } else {
+              render(await requestCreateOptions(field, currentProject(), q));
+            }
+          } catch (e) {
+            setStatus(status, errMsg(e), 'err');
+          }
+        }, 250);
+      };
+      input.addEventListener('input', () => {
+        selectedId = '';
+        search();
+      });
+      // Show results as soon as the field is focused, even when empty.
+      input.addEventListener('focus', search);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') {
+          close();
+          return;
+        }
+        if (list.hidden) return;
+        const rows = list.querySelectorAll<HTMLLIElement>('li');
+        if (ev.key === 'ArrowDown') {
+          ev.preventDefault();
+          activeIdx = Math.min(activeIdx + 1, rows.length - 1);
+          highlight();
+        } else if (ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          activeIdx = Math.max(activeIdx - 1, 0);
+          highlight();
+        } else if (ev.key === 'Enter' && activeIdx >= 0) {
+          ev.preventDefault();
+          const li = rows[activeIdx];
+          commit({ id: li.dataset.id ?? '', label: li.textContent ?? '' });
+        }
+      });
+      input.addEventListener('blur', () => setTimeout(close, 120));
+      return () => selectedId;
+    }
+
+    const getAssignee = wireCombobox(
+      'createAssignee',
+      '[data-create="assignee"]',
+      '[data-combobox-list="assignee"]',
+      false,
+    );
+    const getParent = wireCombobox(
+      'epic',
+      '[data-create="parent"]',
+      '[data-combobox-list="parent"]',
+      true,
+    );
+
+    // Multi-select labels combobox: fetch once, filter locally, free-text add,
+    // selected labels shown as removable chips.
+    const getLabels = ((): (() => string[]) => {
+      const input = document.querySelector<HTMLInputElement>('[data-create="labels"]');
+      const list = document.querySelector<HTMLUListElement>('[data-combobox-list="labels"]');
+      const chipsEl = document.querySelector<HTMLDivElement>('[data-chips="labels"]');
+      const selected: string[] = [];
+      if (!input || !list || !chipsEl) return () => selected;
+
+      let all: string[] = [];
+      let loaded = false;
+      let activeIdx = -1;
+
+      const renderChips = (): void => {
+        chipsEl.innerHTML = '';
+        for (const label of selected) {
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.textContent = label;
+          const x = document.createElement('button');
+          x.textContent = '×';
+          x.addEventListener('mousedown', (ev) => {
+            ev.preventDefault();
+            selected.splice(selected.indexOf(label), 1);
+            renderChips();
+          });
+          chip.appendChild(x);
+          chipsEl.appendChild(chip);
+        }
+      };
+      const add = (label: string): void => {
+        const v = label.trim();
+        if (v && !selected.includes(v)) selected.push(v);
+        input.value = '';
+        list.hidden = true;
+        renderChips();
+      };
+      const highlight = (): void => {
+        list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === activeIdx));
+      };
+      const renderList = (): void => {
+        const q = input.value.trim().toLowerCase();
+        const matches = all.filter((l) => !selected.includes(l) && l.toLowerCase().includes(q));
+        list.innerHTML = '';
+        activeIdx = -1;
+        for (const label of matches.slice(0, 50)) {
+          const li = document.createElement('li');
+          li.textContent = label;
+          li.addEventListener('mousedown', (ev) => {
+            ev.preventDefault();
+            add(label);
+          });
+          list.appendChild(li);
+        }
+        list.hidden = matches.length === 0;
+      };
+      input.addEventListener('focus', async () => {
+        if (!loaded && currentProject()) {
+          try {
+            all = (await requestCreateOptions('label', currentProject(), '')).map((o) => o.id);
+            loaded = true;
+          } catch {
+            // Labels are best-effort; free-text still works.
+          }
+        }
+        renderList();
+      });
+      input.addEventListener('input', renderList);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') {
+          list.hidden = true;
+          activeIdx = -1;
+          return;
+        }
+        const rows = list.querySelectorAll<HTMLLIElement>('li');
+        if (ev.key === 'ArrowDown' && !list.hidden) {
+          ev.preventDefault();
+          activeIdx = Math.min(activeIdx + 1, rows.length - 1);
+          highlight();
+        } else if (ev.key === 'ArrowUp' && !list.hidden) {
+          ev.preventDefault();
+          activeIdx = Math.max(activeIdx - 1, 0);
+          highlight();
+        } else if (ev.key === 'Enter') {
+          ev.preventDefault();
+          // Enter picks the highlighted suggestion, else adds the free-text.
+          if (!list.hidden && activeIdx >= 0) {
+            add(rows[activeIdx].textContent ?? '');
+          } else if (input.value.trim()) {
+            add(input.value);
+          }
+        }
+      });
+      input.addEventListener('blur', () => setTimeout(() => (list.hidden = true), 120));
+      return () => selected;
+    })();
+
+    // Preload priorities into the dropdown.
+    if (priorityEl && currentProject()) {
+      requestCreateOptions('priority', currentProject(), '')
+        .then((options) => {
+          for (const opt of options) {
+            const o = document.createElement('option');
+            o.value = opt.id;
+            o.textContent = opt.label;
+            priorityEl.appendChild(o);
+          }
+        })
+        .catch(() => undefined);
+    }
+
     createBtn.addEventListener('click', async () => {
-      const projectKey = projectEl?.value.trim() ?? '';
+      const projectKey = currentProject();
       const issueType = typeEl?.value.trim() ?? '';
       const summary = summaryEl?.value.trim() ?? '';
       if (!projectKey) {
@@ -362,7 +615,17 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
       try {
         const res = await request({
           type: 'createIssue',
-          input: { projectKey, issueType, summary },
+          input: {
+            projectKey,
+            issueType,
+            summary,
+            description: descEl?.value.trim() || undefined,
+            priorityId: priorityEl?.value || undefined,
+            dueDate: dueDateEl?.value || undefined,
+            assigneeAccountId: getAssignee() || undefined,
+            parentKey: getParent() || undefined,
+            labels: getLabels().length ? getLabels() : undefined,
+          },
         });
         if (res.type === 'created') {
           setStatus(status, `Created ${res.key} ✓`, 'ok');

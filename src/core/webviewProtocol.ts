@@ -5,7 +5,16 @@ export interface CreateIssueInput {
   projectKey: string;
   issueType: string;
   summary: string;
+  description?: string;
+  labels?: string[];
+  priorityId?: string;
+  dueDate?: string;
+  parentKey?: string;
+  assigneeAccountId?: string;
 }
+
+/** Option feeds for the create form. */
+export type CreateOptionKind = 'priority' | 'createAssignee' | 'epic' | 'label';
 
 /** Messages sent from the webview to the extension. */
 export type InboundMessage =
@@ -16,7 +25,14 @@ export type InboundMessage =
       query: string;
     }
   | { type: 'applyEdit'; requestId: string; action: EditAction }
-  | { type: 'createIssue'; requestId: string; input: CreateIssueInput };
+  | { type: 'createIssue'; requestId: string; input: CreateIssueInput }
+  | {
+      type: 'createOptions';
+      requestId: string;
+      kind: CreateOptionKind;
+      projectKey: string;
+      query: string;
+    };
 
 /** Messages sent from the extension to the webview. */
 export type OutboundMessage =

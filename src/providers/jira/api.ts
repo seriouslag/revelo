@@ -56,6 +56,28 @@ export interface JiraAssignableUser {
   emailAddress?: string;
 }
 
+export interface JiraPriority {
+  id: string;
+  name: string;
+}
+
+export interface JiraEpic {
+  key: string;
+  summary: string;
+}
+
+export interface CreateIssueFields {
+  projectKey: string;
+  issueType: string;
+  summary: string;
+  description?: AdfNode;
+  labels?: string[];
+  priorityId?: string;
+  dueDate?: string;
+  parentKey?: string;
+  assigneeAccountId?: string;
+}
+
 export interface JiraPermissions {
   edit: boolean;
   assign: boolean;
@@ -186,12 +208,7 @@ export class JiraClient {
   }
 
   /** Create an issue; returns the new issue key (e.g. "ABC-123"). */
-  async createIssue(input: {
-    projectKey: string;
-    issueType: string;
-    summary: string;
-    description?: AdfNode;
-  }): Promise<string> {
+  async createIssue(input: CreateIssueFields): Promise<string> {
     try {
       const created = await this.client.issues.createIssue({
         fields: {
@@ -203,9 +220,77 @@ export class JiraClient {
           ...(input.description
             ? { description: input.description as unknown as Version3Models.Document }
             : {}),
+          ...(input.labels && input.labels.length ? { labels: input.labels } : {}),
+          ...(input.priorityId ? { priority: { id: input.priorityId } } : {}),
+          ...(input.dueDate ? { duedate: input.dueDate } : {}),
+          ...(input.parentKey ? { parent: { key: input.parentKey } } : {}),
+          ...(input.assigneeAccountId
+            ? { assignee: { id: input.assigneeAccountId } }
+            : {}),
         },
       });
       return created.key;
+    } catch (error) {
+      mapError(error);
+    }
+  }
+
+  /** Priorities available in this Jira instance. */
+  async getPriorities(): Promise<JiraPriority[]> {
+    try {
+      const priorities = await this.client.issuePriorities.getPriorities();
+      return (priorities as Array<{ id?: string; name?: string }>).map((p) => ({
+        id: p.id ?? '',
+        name: p.name ?? '',
+      }));
+    } catch (error) {
+      mapError(error);
+    }
+  }
+
+  /** Assignable users for a project (used before an issue exists). */
+  async getAssignableUsersForProject(
+    projectKey: string,
+    query: string,
+  ): Promise<JiraAssignableUser[]> {
+    try {
+      const users = await this.client.userSearch.findAssignableUsers({
+        project: projectKey,
+        query,
+        maxResults: 50,
+      });
+      return users as unknown as JiraAssignableUser[];
+    } catch (error) {
+      mapError(error);
+    }
+  }
+
+  /**
+   * List a project's epics. Filtering by key/summary happens client-side (JQL
+   * can't do partial-key matching, and the displayed label carries the key).
+   */
+  async searchEpics(projectKey: string): Promise<JiraEpic[]> {
+    const jql = `project = "${projectKey}" AND issuetype = Epic ORDER BY created DESC`;
+    try {
+      // Uses the /search/jql endpoint; the older /search was removed by
+      // Atlassian in 2025 and now returns 410 on Cloud.
+      const res = await this.client.issueSearch.searchForIssuesUsingJqlEnhancedSearch({
+        jql,
+        maxResults: 100,
+        fields: ['summary'],
+      });
+      const issues = (res.issues ?? []) as Array<{ key?: string; fields?: { summary?: string } }>;
+      return issues.map((i) => ({ key: i.key ?? '', summary: i.fields?.summary ?? '' }));
+    } catch (error) {
+      mapError(error);
+    }
+  }
+
+  /** All labels defined in the instance (global; no server-side filter). */
+  async getLabels(): Promise<string[]> {
+    try {
+      const res = await this.client.labels.getAllLabels({ maxResults: 1000 });
+      return (res.values ?? []) as string[];
     } catch (error) {
       mapError(error);
     }

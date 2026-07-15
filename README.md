@@ -12,7 +12,7 @@ Works in VS Code and Cursor.
 - **GitHub** — issues, PRs, and discussions. Detects `#123`, `GH-123`, `owner/repo#123`, and full `github.com` URLs (including GitHub Enterprise). Shows title, state (open/closed/merged/draft with the correct color), author, labels, and a body snippet.
 - **Sentry** — issues by URL or short ID (`PROJECT-42`). Shows title, level, status, event/user counts, and last-seen date. Region-aware (US/EU/self-hosted).
 - **Jira** — issues by key (`ABC-123`) or Cloud/Server URL. Shows summary, status, type, priority, assignee, and description (Atlassian Document Format rendered inline).
-- **Create Jira tickets from TODOs** — with `revelo.jira.requireTicketForTodo` on, `TODO`/`FIXME` comments without a linked ticket get a warning and a quick fix that creates a Jira issue and writes its key back into the comment (`// TODO(ABC-123): …`).
+- **Create Jira tickets from TODOs** — with `revelo.jira.requireTicketForTodo` on, `TODO`/`FIXME` comments without a linked ticket get a warning and a quick fix that opens a create form in the panel (summary, description with a source link, project, type, priority, assignee search, epic/parent search, labels, due date). On create it writes the new key back into the comment (`// TODO(ABC-123): …`) and opens the issue.
 
 References are detected only inside **comments** (per-language) and **Markdown/plaintext** prose, so ordinary code isn't matched.
 
