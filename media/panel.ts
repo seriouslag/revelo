@@ -1,5 +1,6 @@
 import type { InboundMessage, OutboundMessage } from '../src/core/webviewProtocol';
 import type { EditOption } from '../src/core/types';
+import { createCombobox } from './combobox';
 
 // VS Code webview API, injected at runtime.
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
@@ -102,25 +103,9 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
   const assigneeList = document.querySelector<HTMLUListElement>('[data-combobox-list]');
   if (assigneeInput && assigneeList) {
     const status = document.querySelector('[data-status-for="assignee"]');
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let items: EditOption[] = [];
-    let activeIdx = -1;
-    // The last committed assignee text, restored when the user cancels editing.
-    let committed = assigneeInput.value;
-
-    const close = (): void => {
-      assigneeList.hidden = true;
-      activeIdx = -1;
-    };
-    const cancel = (): void => {
-      close();
-      assigneeInput.value = committed;
-    };
     const mode = assigneeInput.dataset.assignMode || 'single';
-    const assign = async (id: string, label: string): Promise<void> => {
-      close();
-      assigneeInput.value = id ? label : '';
-      committed = assigneeInput.value;
+    const assign = async (option: EditOption): Promise<void> => {
+      const id = option.id;
       setStatus(status, 'Updating…');
       // Jira assigns a single accountId (null = unassign); GitHub replaces the
       // assignee list with [login] (or [] for unassigned).
@@ -135,68 +120,16 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
         setStatus(status, errMsg(e), 'err');
       }
     };
-    const renderList = (): void => {
-      assigneeList.innerHTML = '';
-      const q = assigneeInput.value.trim().toLowerCase();
-      const matches = q ? items.filter((it) => it.label.toLowerCase().includes(q)) : items;
-      const rows: EditOption[] = [];
-      if (!q || 'unassigned'.includes(q)) {
-        rows.push({ id: '', label: 'Unassigned' });
-      }
-      rows.push(...matches);
-      rows.forEach((row, i) => {
-        const li = document.createElement('li');
-        li.textContent = row.label;
-        li.dataset.id = row.id;
-        if (i === activeIdx) li.classList.add('active');
-        li.addEventListener('mousedown', (ev) => {
-          ev.preventDefault();
-          void assign(row.id, row.label);
-        });
-        assigneeList.appendChild(li);
-      });
-      assigneeList.hidden = false;
-    };
-
-    assigneeInput.addEventListener('input', () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(async () => {
-        try {
-          items = await requestOptions('assignee', assigneeInput.value.trim());
-          activeIdx = -1;
-          renderList();
-        } catch (e) {
-          setStatus(status, errMsg(e), 'err');
-        }
-      }, 250);
+    createCombobox({
+      input: assigneeInput,
+      list: assigneeList,
+      localFilter: true,
+      specialRow: { id: '', label: 'Unassigned' },
+      revertOnBlur: true,
+      load: (q) => requestOptions('assignee', q),
+      onSelect: (option) => void assign(option),
+      onError: (e) => setStatus(status, errMsg(e), 'err'),
     });
-    assigneeInput.addEventListener('keydown', (ev) => {
-      // Escape reverts even when the dropdown is already closed.
-      if (ev.key === 'Escape') {
-        cancel();
-        assigneeInput.blur();
-        return;
-      }
-      if (assigneeList.hidden) return;
-      const rows = assigneeList.querySelectorAll('li');
-      if (ev.key === 'ArrowDown') {
-        ev.preventDefault();
-        activeIdx = Math.min(activeIdx + 1, rows.length - 1);
-      } else if (ev.key === 'ArrowUp') {
-        ev.preventDefault();
-        activeIdx = Math.max(activeIdx - 1, 0);
-      } else if (ev.key === 'Enter' && activeIdx >= 0) {
-        ev.preventDefault();
-        const li = rows[activeIdx] as HTMLLIElement;
-        void assign(li.dataset.id ?? '', li.textContent ?? '');
-        return;
-      } else {
-        return;
-      }
-      rows.forEach((li, i) => li.classList.toggle('active', i === activeIdx));
-    });
-    // On blur, revert any uncommitted typing to the last committed value.
-    assigneeInput.addEventListener('blur', () => setTimeout(cancel, 120));
   }
 
   // --- State toggle (GitHub close / reopen; Sentry resolve/unresolve) ---
@@ -377,212 +310,83 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
       setTimeout(autogrow, 0);
     }
 
-    // A search combobox that resolves a selected id (assignee, epic parent).
-    // localFilter: fetch options once and filter client-side (epics — JQL can't
-    // do partial-key matching). Otherwise search the server per keystroke.
-    function wireCombobox(
-      field: 'createAssignee' | 'epic',
-      inputSel: string,
-      listSel: string,
-      localFilter: boolean,
-    ): () => string {
-      const input = document.querySelector<HTMLInputElement>(inputSel);
-      const list = document.querySelector<HTMLUListElement>(listSel);
-      let selectedId = '';
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let cache: EditOption[] | undefined;
-      let activeIdx = -1;
-      if (!input || !list) return () => selectedId;
+    // Guard the create-form option feeds: no project → no search.
+    const createLoad =
+      (kind: 'createAssignee' | 'epic' | 'label') =>
+      (q: string): Promise<EditOption[]> => {
+        if (!currentProject()) {
+          setStatus(status, 'Select a project first', 'err');
+          return Promise.resolve([]);
+        }
+        return requestCreateOptions(kind, currentProject(), q);
+      };
 
-      const close = (): void => {
-        list.hidden = true;
-        activeIdx = -1;
-      };
-      const commit = (row: EditOption): void => {
-        selectedId = row.id;
-        input.value = row.id ? row.label : '';
-        close();
-      };
-      const highlight = (): void => {
-        list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === activeIdx));
-      };
-      const render = (items: EditOption[]): void => {
-        list.innerHTML = '';
-        activeIdx = -1;
-        const rows: EditOption[] = [{ id: '', label: 'None' }, ...items.slice(0, 50)];
-        for (const row of rows) {
-          const li = document.createElement('li');
-          li.textContent = row.label;
-          li.dataset.id = row.id;
-          li.addEventListener('mousedown', (ev) => {
-            ev.preventDefault();
-            commit(row);
-          });
-          list.appendChild(li);
-        }
-        list.hidden = false;
-      };
-      const search = (): void => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(async () => {
-          if (!currentProject()) {
-            setStatus(status, 'Select a project first', 'err');
-            return;
-          }
-          const q = input.value.trim();
-          try {
-            if (localFilter) {
-              if (!cache) cache = await requestCreateOptions(field, currentProject(), '');
-              const ql = q.toLowerCase();
-              render(ql ? cache.filter((o) => o.label.toLowerCase().includes(ql)) : cache);
-            } else {
-              render(await requestCreateOptions(field, currentProject(), q));
-            }
-          } catch (e) {
-            setStatus(status, errMsg(e), 'err');
-          }
-        }, 250);
-      };
-      input.addEventListener('input', () => {
-        selectedId = '';
-        search();
-      });
-      // Show results as soon as the field is focused, even when empty.
-      input.addEventListener('focus', search);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape') {
-          close();
-          return;
-        }
-        if (list.hidden) return;
-        const rows = list.querySelectorAll<HTMLLIElement>('li');
-        if (ev.key === 'ArrowDown') {
-          ev.preventDefault();
-          activeIdx = Math.min(activeIdx + 1, rows.length - 1);
-          highlight();
-        } else if (ev.key === 'ArrowUp') {
-          ev.preventDefault();
-          activeIdx = Math.max(activeIdx - 1, 0);
-          highlight();
-        } else if (ev.key === 'Enter' && activeIdx >= 0) {
-          ev.preventDefault();
-          const li = rows[activeIdx];
-          commit({ id: li.dataset.id ?? '', label: li.textContent ?? '' });
-        }
-      });
-      input.addEventListener('blur', () => setTimeout(close, 120));
-      return () => selectedId;
-    }
-
-    const getAssignee = wireCombobox(
-      'createAssignee',
-      '[data-create="assignee"]',
+    // Assignee: server-searched per keystroke. Epic: fetched once then filtered
+    // locally (JQL can't partial-match keys). Both single-select with a "None".
+    const createAssigneeInput = document.querySelector<HTMLInputElement>('[data-create="assignee"]');
+    const createAssigneeList = document.querySelector<HTMLUListElement>(
       '[data-combobox-list="assignee"]',
-      false,
     );
-    const getParent = wireCombobox(
-      'epic',
-      '[data-create="parent"]',
-      '[data-combobox-list="parent"]',
-      true,
-    );
+    const assigneeBox =
+      createAssigneeInput && createAssigneeList
+        ? createCombobox({
+            input: createAssigneeInput,
+            list: createAssigneeList,
+            specialRow: { id: '', label: 'None' },
+            load: createLoad('createAssignee'),
+            onError: (e) => setStatus(status, errMsg(e), 'err'),
+          })
+        : undefined;
 
-    // Multi-select labels combobox: fetch once, filter locally, free-text add,
-    // selected labels shown as removable chips.
-    const getLabels = ((): (() => string[]) => {
-      const input = document.querySelector<HTMLInputElement>('[data-create="labels"]');
-      const list = document.querySelector<HTMLUListElement>('[data-combobox-list="labels"]');
-      const chipsEl = document.querySelector<HTMLDivElement>('[data-chips="labels"]');
-      const selected: string[] = [];
-      if (!input || !list || !chipsEl) return () => selected;
+    const parentInput = document.querySelector<HTMLInputElement>('[data-create="parent"]');
+    const parentList = document.querySelector<HTMLUListElement>('[data-combobox-list="parent"]');
+    const parentBox =
+      parentInput && parentList
+        ? createCombobox({
+            input: parentInput,
+            list: parentList,
+            localFilter: true,
+            specialRow: { id: '', label: 'None' },
+            load: createLoad('epic'),
+            onError: (e) => setStatus(status, errMsg(e), 'err'),
+          })
+        : undefined;
 
-      let all: string[] = [];
-      let loaded = false;
-      let activeIdx = -1;
+    // Labels: multi-select with chips, fetched once, free-text allowed.
+    const labelsInput = document.querySelector<HTMLInputElement>('[data-create="labels"]');
+    const labelsList = document.querySelector<HTMLUListElement>('[data-combobox-list="labels"]');
+    const labelsChips = document.querySelector<HTMLDivElement>('[data-chips="labels"]');
+    const labelsBox =
+      labelsInput && labelsList && labelsChips
+        ? createCombobox({
+            input: labelsInput,
+            list: labelsList,
+            chips: labelsChips,
+            mode: 'multi',
+            freeText: true,
+            localFilter: true,
+            load: createLoad('label'),
+            onError: () => undefined,
+          })
+        : undefined;
 
-      const renderChips = (): void => {
-        chipsEl.innerHTML = '';
-        for (const label of selected) {
-          const chip = document.createElement('span');
-          chip.className = 'chip';
-          chip.textContent = label;
-          const x = document.createElement('button');
-          x.textContent = '×';
-          x.addEventListener('mousedown', (ev) => {
-            ev.preventDefault();
-            selected.splice(selected.indexOf(label), 1);
-            renderChips();
-          });
-          chip.appendChild(x);
-          chipsEl.appendChild(chip);
-        }
-      };
-      const add = (label: string): void => {
-        const v = label.trim();
-        if (v && !selected.includes(v)) selected.push(v);
-        input.value = '';
-        list.hidden = true;
-        renderChips();
-      };
-      const highlight = (): void => {
-        list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('active', i === activeIdx));
-      };
-      const renderList = (): void => {
-        const q = input.value.trim().toLowerCase();
-        const matches = all.filter((l) => !selected.includes(l) && l.toLowerCase().includes(q));
-        list.innerHTML = '';
-        activeIdx = -1;
-        for (const label of matches.slice(0, 50)) {
-          const li = document.createElement('li');
-          li.textContent = label;
-          li.addEventListener('mousedown', (ev) => {
-            ev.preventDefault();
-            add(label);
-          });
-          list.appendChild(li);
-        }
-        list.hidden = matches.length === 0;
-      };
-      input.addEventListener('focus', async () => {
-        if (!loaded && currentProject()) {
-          try {
-            all = (await requestCreateOptions('label', currentProject(), '')).map((o) => o.id);
-            loaded = true;
-          } catch {
-            // Labels are best-effort; free-text still works.
+    const getAssignee = (): string => assigneeBox?.getValue() ?? '';
+    const getParent = (): string => parentBox?.getValue() ?? '';
+    const getLabels = (): string[] => labelsBox?.getValues() ?? [];
+
+    // Preload priorities into the dropdown.
+    if (priorityEl && currentProject()) {
+      requestCreateOptions('priority', currentProject(), '')
+        .then((options) => {
+          for (const opt of options) {
+            const o = document.createElement('option');
+            o.value = opt.id;
+            o.textContent = opt.label;
+            priorityEl.appendChild(o);
           }
-        }
-        renderList();
-      });
-      input.addEventListener('input', renderList);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape') {
-          list.hidden = true;
-          activeIdx = -1;
-          return;
-        }
-        const rows = list.querySelectorAll<HTMLLIElement>('li');
-        if (ev.key === 'ArrowDown' && !list.hidden) {
-          ev.preventDefault();
-          activeIdx = Math.min(activeIdx + 1, rows.length - 1);
-          highlight();
-        } else if (ev.key === 'ArrowUp' && !list.hidden) {
-          ev.preventDefault();
-          activeIdx = Math.max(activeIdx - 1, 0);
-          highlight();
-        } else if (ev.key === 'Enter') {
-          ev.preventDefault();
-          // Enter picks the highlighted suggestion, else adds the free-text.
-          if (!list.hidden && activeIdx >= 0) {
-            add(rows[activeIdx].textContent ?? '');
-          } else if (input.value.trim()) {
-            add(input.value);
-          }
-        }
-      });
-      input.addEventListener('blur', () => setTimeout(() => (list.hidden = true), 120));
-      return () => selected;
-    })();
+        })
+        .catch(() => undefined);
+    }
 
     // Preload priorities into the dropdown.
     if (priorityEl && currentProject()) {
