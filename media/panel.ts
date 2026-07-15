@@ -392,9 +392,11 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let cache: EditOption[] | undefined;
       let activeIdx = -1;
+      let focused = false;
       if (!input || !list) return () => selectedId;
 
       const close = (): void => {
+        if (timer) clearTimeout(timer);
         list.hidden = true;
         activeIdx = -1;
       };
@@ -434,9 +436,13 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
             if (localFilter) {
               if (!cache) cache = await requestCreateOptions(field, currentProject(), '');
               const ql = q.toLowerCase();
+              // The field may have lost focus while the fetch was in flight.
+              if (!focused) return;
               render(ql ? cache.filter((o) => o.label.toLowerCase().includes(ql)) : cache);
             } else {
-              render(await requestCreateOptions(field, currentProject(), q));
+              const options = await requestCreateOptions(field, currentProject(), q);
+              if (!focused) return;
+              render(options);
             }
           } catch (e) {
             setStatus(status, errMsg(e), 'err');
@@ -448,7 +454,10 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
         search();
       });
       // Show results as soon as the field is focused, even when empty.
-      input.addEventListener('focus', search);
+      input.addEventListener('focus', () => {
+        focused = true;
+        search();
+      });
       input.addEventListener('keydown', (ev) => {
         if (ev.key === 'Escape') {
           close();
@@ -470,7 +479,10 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
           commit({ id: li.dataset.id ?? '', label: li.textContent ?? '' });
         }
       });
-      input.addEventListener('blur', () => setTimeout(close, 120));
+      input.addEventListener('blur', () => {
+        focused = false;
+        setTimeout(close, 120);
+      });
       return () => selectedId;
     }
 
@@ -499,6 +511,7 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
       let all: string[] = [];
       let loaded = false;
       let activeIdx = -1;
+      let focused = false;
 
       const renderChips = (): void => {
         chipsEl.innerHTML = '';
@@ -544,6 +557,7 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
         list.hidden = matches.length === 0;
       };
       input.addEventListener('focus', async () => {
+        focused = true;
         if (!loaded && currentProject()) {
           try {
             all = (await requestCreateOptions('label', currentProject(), '')).map((o) => o.id);
@@ -552,7 +566,8 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
             // Labels are best-effort; free-text still works.
           }
         }
-        renderList();
+        // The field may have lost focus while labels were loading.
+        if (focused) renderList();
       });
       input.addEventListener('input', renderList);
       input.addEventListener('keydown', (ev) => {
@@ -580,7 +595,10 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
           }
         }
       });
-      input.addEventListener('blur', () => setTimeout(() => (list.hidden = true), 120));
+      input.addEventListener('blur', () => {
+        focused = false;
+        setTimeout(() => (list.hidden = true), 120);
+      });
       return () => selected;
     })();
 
