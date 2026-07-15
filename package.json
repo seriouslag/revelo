@@ -174,17 +174,88 @@
           ],
           "description": "Comment keywords that trigger TODO detection (case-insensitive)."
         },
-        "revelo.jira.issueTypes": {
+        "revelo.jira.visibleIssueTypes": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": [
-            "Task",
-            "Bug",
-            "Story"
-          ],
-          "description": "Issue types offered when creating a Jira ticket from a TODO. The first is the default."
+          "default": [],
+          "description": "Restrict the Type dropdown in the create form to these issue type names (e.g. [\"Task\", \"Bug\", \"Story\"]). Leave empty to show all types from Jira. Names are matched case-insensitively."
+        },
+        "revelo.jira.visiblePriorities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Restrict the Priority dropdown to these priorities, matched by id or name (case-insensitive). Leave empty to show all. Enable revelo.jira.debug to discover priority ids."
+        },
+        "revelo.jira.visibleLabels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Restrict the Labels suggestion list to these labels. Leave empty to suggest all labels from Jira. Free-text labels are still allowed regardless."
+        },
+        "revelo.jira.ticketTemplates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Label shown in the template picker."
+              },
+              "projectKey": {
+                "type": "string",
+                "description": "Project key to pre-select (e.g. \"ABC\")."
+              },
+              "issueType": {
+                "type": "string",
+                "description": "Issue type to pre-select (e.g. \"Bug\")."
+              },
+              "priorityId": {
+                "type": "string",
+                "description": "Priority id to pre-select. Ids are Jira-specific; find them via your Jira instance."
+              },
+              "parentKey": {
+                "type": "string",
+                "description": "Parent/epic key to pre-fill (e.g. \"ABC-100\")."
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Labels to pre-fill."
+              },
+              "assigneeAccountId": {
+                "type": "string",
+                "description": "Account id of the default assignee."
+              },
+              "dueDate": {
+                "type": "string",
+                "description": "Default due date in YYYY-MM-DD format."
+              }
+            }
+          },
+          "default": [],
+          "description": "Saved templates that pre-populate the create-from-TODO form. Each needs a `name`; every other field is optional. Example: a \"Bug\" template with a fixed project, priority, parent and labels."
+        },
+        "revelo.jira.prefetchEpicsMaxProjects": {
+          "type": "number",
+          "default": 5,
+          "description": "Prefetch epics at startup for each configured projectKey, but only when there are at most this many keys (avoids a burst of requests for large lists). Set to 0 to disable epic prefetching."
+        },
+        "revelo.jira.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show internal Jira ids (priority, assignee) in the create-from-TODO form. Use it to discover the ids to put in ticketTemplates, then turn it off."
         },
         "revelo.cache.ttlSeconds": {
           "type": "number",

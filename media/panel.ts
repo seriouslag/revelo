@@ -1,4 +1,8 @@
-import type { InboundMessage, OutboundMessage } from '../src/core/webviewProtocol';
+import type {
+  InboundMessage,
+  OutboundMessage,
+  JiraTicketTemplate as JiraTemplate,
+} from '../src/core/webviewProtocol';
 import type { EditOption } from '../src/core/types';
 import { createCombobox } from './combobox';
 
@@ -9,6 +13,17 @@ declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 // distributive conditional so each union member keeps its own fields.
 type OmitDistributive<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
+
+// Apply a template value to a field. For a <select>, only select it when the
+// option already exists (setting an absent value silently no-ops, so skip it and
+// leave the current selection). A free-text <input> accepts any value.
+function setFieldValue(el: HTMLInputElement | HTMLSelectElement | null, value: string): void {
+  if (!el) return;
+  if (el instanceof HTMLSelectElement && !Array.from(el.options).some((o) => o.value === value)) {
+    return;
+  }
+  el.value = value;
+}
 
 (function () {
   const vscode = acquireVsCodeApi();
@@ -46,7 +61,7 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
   }
 
   async function requestCreateOptions(
-    kind: 'priority' | 'createAssignee' | 'epic' | 'label',
+    kind: 'createAssignee' | 'epic' | 'label',
     projectKey: string,
     query: string,
   ): Promise<EditOption[]> {
@@ -285,7 +300,6 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
     const projectEl = document.querySelector<HTMLInputElement | HTMLSelectElement>(
       '[data-create="project"]',
     );
-    const typeEl = document.querySelector<HTMLSelectElement>('[data-create="type"]');
     const summaryEl = document.querySelector<HTMLTextAreaElement>('[data-create="summary"]');
     const descEl = document.querySelector<HTMLTextAreaElement>('[data-create="description"]');
     const priorityEl = document.querySelector<HTMLSelectElement>('[data-create="priority"]');
@@ -352,10 +366,19 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
           })
         : undefined;
 
-    // Labels: multi-select with chips, fetched once, free-text allowed.
+    // Labels: multi-select with chips, free-text allowed. Short/curated lists
+    // also get clickable toggle buttons for every option (data-label-toggle).
     const labelsInput = document.querySelector<HTMLInputElement>('[data-create="labels"]');
     const labelsList = document.querySelector<HTMLUListElement>('[data-combobox-list="labels"]');
     const labelsChips = document.querySelector<HTMLDivElement>('[data-chips="labels"]');
+    const labelToggles = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-label-toggle]'),
+    );
+    const syncLabelToggles = (values: string[]): void => {
+      for (const btn of labelToggles) {
+        btn.classList.toggle('selected', values.includes(btn.dataset.labelToggle ?? ''));
+      }
+    };
     const labelsBox =
       labelsInput && labelsList && labelsChips
         ? createCombobox({
@@ -366,48 +389,85 @@ type RequestBody = OmitDistributive<InboundMessage, 'requestId'>;
             freeText: true,
             localFilter: true,
             load: createLoad('label'),
+            onChange: syncLabelToggles,
             onError: () => undefined,
           })
         : undefined;
+    for (const btn of labelToggles) {
+      btn.addEventListener('click', () => labelsBox?.toggleValue(btn.dataset.labelToggle ?? ''));
+    }
+
+    // Type: a plain <select> for short/curated lists, or a searchable combobox
+    // for the full (often huge) Jira list. The server picks the mode.
+    const typeEl = document.querySelector<HTMLSelectElement | HTMLInputElement>(
+      '[data-create="type"]',
+    );
+    const typeIsSelect = typeEl instanceof HTMLSelectElement;
+    const typeList = document.querySelector<HTMLUListElement>('[data-combobox-list="type"]');
+    const typesRaw = document.querySelector('[data-issue-types]')?.textContent;
+    const issueTypes: string[] = typesRaw ? JSON.parse(typesRaw) : [];
+    const typeBox =
+      !typeIsSelect && typeEl && typeList
+        ? createCombobox({
+            input: typeEl,
+            list: typeList,
+            localFilter: true,
+            revertOnBlur: true,
+            load: () => Promise.resolve(issueTypes.map((t) => ({ id: t, label: t }))),
+          })
+        : undefined;
+    // Combobox has no default option element, so seed it with the first type.
+    if (typeBox && issueTypes[0]) typeBox.setValue(issueTypes[0], issueTypes[0]);
+
+    const getType = (): string => (typeIsSelect ? (typeEl?.value ?? '') : (typeBox?.getValue() ?? ''));
+    const setType = (v: string): void => {
+      if (typeIsSelect) setFieldValue(typeEl, v);
+      else typeBox?.setValue(v, v);
+    };
 
     const getAssignee = (): string => assigneeBox?.getValue() ?? '';
     const getParent = (): string => parentBox?.getValue() ?? '';
     const getLabels = (): string[] => labelsBox?.getValues() ?? [];
 
-    // Preload priorities into the dropdown.
-    if (priorityEl && currentProject()) {
-      requestCreateOptions('priority', currentProject(), '')
-        .then((options) => {
-          for (const opt of options) {
-            const o = document.createElement('option');
-            o.value = opt.id;
-            o.textContent = opt.label;
-            priorityEl.appendChild(o);
-          }
-        })
-        .catch(() => undefined);
-    }
+    // Template picker: prefill fields from the chosen saved template. Priority
+    // options are rendered server-side (instance-wide), so we just select them.
+    const templateEl = document.querySelector<HTMLSelectElement>('[data-create="template"]');
+    const templatesRaw = document.querySelector('[data-templates]')?.textContent;
+    const templates: JiraTemplate[] = templatesRaw ? JSON.parse(templatesRaw) : [];
 
-    // Preload priorities into the dropdown.
-    if (priorityEl && currentProject()) {
-      requestCreateOptions('priority', currentProject(), '')
-        .then((options) => {
-          for (const opt of options) {
-            const o = document.createElement('option');
-            o.value = opt.id;
-            o.textContent = opt.label;
-            priorityEl.appendChild(o);
-          }
-        })
-        .catch(() => undefined);
+    const applyTemplate = (t: JiraTemplate | undefined): void => {
+      if (!t) return;
+      if (t.projectKey) setFieldValue(projectEl, t.projectKey);
+      if (t.issueType) setType(t.issueType);
+      if (t.priorityId) setFieldValue(priorityEl, t.priorityId);
+      if (t.dueDate && dueDateEl) dueDateEl.value = t.dueDate;
+      if (t.parentKey) parentBox?.setValue(t.parentKey, t.parentKey);
+      if (t.assigneeAccountId) assigneeBox?.setValue(t.assigneeAccountId, t.assigneeAccountId);
+      if (t.labels) labelsBox?.setValues(t.labels);
+    };
+
+    templateEl?.addEventListener('change', () => {
+      applyTemplate(templates[Number(templateEl.value)]);
+    });
+
+    // Auto-apply the template the extension pre-selected (chosen by the quick
+    // fix's issue type).
+    const preselect = Number(templateEl?.dataset.preselect ?? -1);
+    if (preselect >= 0 && templateEl) {
+      templateEl.value = String(preselect);
+      applyTemplate(templates[preselect]);
     }
 
     createBtn.addEventListener('click', async () => {
       const projectKey = currentProject();
-      const issueType = typeEl?.value.trim() ?? '';
+      const issueType = getType();
       const summary = summaryEl?.value.trim() ?? '';
       if (!projectKey) {
         setStatus(status, 'Project key is required', 'err');
+        return;
+      }
+      if (!issueType) {
+        setStatus(status, 'Type is required', 'err');
         return;
       }
       if (!summary) {

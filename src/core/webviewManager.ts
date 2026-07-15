@@ -22,35 +22,46 @@ export class WebviewManager {
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
-  show(options: ShowOptions): void {
-    if (!this.panel) {
-      this.panel = vscode.window.createWebviewPanel(
-        'revelo.detail',
-        options.title,
-        vscode.ViewColumn.Beside,
-        {
-          enableScripts: true,
-          retainContextWhenHidden: true,
-          localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')],
-        },
-      );
-      this.panel.onDidDispose(() => {
-        this.messageSub?.dispose();
-        this.messageSub = undefined;
-        this.panel = undefined;
-      });
+  private ensurePanel(): vscode.WebviewPanel {
+    if (this.panel) {
+      return this.panel;
     }
+    const panel = vscode.window.createWebviewPanel(
+      'revelo.detail',
+      'Revelo',
+      vscode.ViewColumn.Beside,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')],
+      },
+    );
+    panel.onDidDispose(() => {
+      this.messageSub?.dispose();
+      this.messageSub = undefined;
+      this.panel = undefined;
+    });
+    this.panel = panel;
+    return panel;
+  }
+
+  show(options: ShowOptions): void {
+    const panel = this.ensurePanel();
 
     // Rewire the message handler for this content (a new render may carry a
     // different reference/handler).
     this.messageSub?.dispose();
     this.messageSub = options.onMessage
-      ? this.panel.webview.onDidReceiveMessage(options.onMessage as (m: unknown) => void)
+      ? panel.webview.onDidReceiveMessage(options.onMessage as (m: unknown) => void)
       : undefined;
 
-    this.panel.title = options.title;
-    this.panel.webview.html = this.wrap(this.panel.webview, options.renderBody(this.panel.webview));
-    this.panel.reveal(vscode.ViewColumn.Beside);
+    panel.title = `Revelo: ${options.title}`;
+    panel.webview.html = this.wrap(panel.webview, options.renderBody(panel.webview));
+    panel.reveal(vscode.ViewColumn.Beside);
+  }
+
+  close(): void {
+    this.panel?.dispose();
   }
 
   post(message: OutboundMessage): void {
@@ -140,6 +151,22 @@ export class WebviewManager {
   .chip button { background: none; border: none; color: inherit; cursor: pointer; padding: 0 2px;
                  font-size: 1.1em; line-height: 1; }
   .chip button:hover { background: none; opacity: 0.7; }
+  .spinner { display: inline-block; width: 12px; height: 12px; vertical-align: -1px;
+             border: 2px solid var(--vscode-descriptionForeground); border-top-color: transparent;
+             border-radius: 50%; animation: rv-spin 0.7s linear infinite; }
+  @keyframes rv-spin { to { transform: rotate(360deg); } }
+  .loading-panel { position: fixed; inset: 0; display: flex; flex-direction: column;
+                   align-items: center; justify-content: center; gap: 10px; }
+  .loading-panel .spinner { width: 22px; height: 22px; border-width: 3px; }
+  .loading-panel .meta { margin: 0; }
+  .label-toggles { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .label-toggle { padding: 1px 10px; border-radius: 20px; font-size: 0.82em; cursor: pointer;
+                  border: 1px solid var(--vscode-panel-border); background: none;
+                  color: var(--vscode-foreground); }
+  .label-toggle:hover { background: var(--vscode-toolbar-hoverBackground); }
+  .label-toggle.selected { background: var(--vscode-badge-background);
+                           color: var(--vscode-badge-foreground);
+                           border-color: var(--vscode-badge-background); }
   .label-editor { margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--vscode-panel-border);
                   border-radius: 4px; max-width: 400px; }
   .label-search { width: 100%; box-sizing: border-box; margin-bottom: 8px; }

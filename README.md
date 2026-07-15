@@ -12,7 +12,8 @@ Works in VS Code and Cursor.
 - **GitHub** — issues, PRs, and discussions. Detects `#123`, `GH-123`, `owner/repo#123`, and full `github.com` URLs (including GitHub Enterprise). Shows title, state (open/closed/merged/draft with the correct color), author, labels, and a body snippet.
 - **Sentry** — issues by URL or short ID (`PROJECT-42`). Shows title, level, status, event/user counts, and last-seen date. Region-aware (US/EU/self-hosted).
 - **Jira** — issues by key (`ABC-123`) or Cloud/Server URL. Shows summary, status, type, priority, assignee, and description (Atlassian Document Format rendered inline).
-- **Create Jira tickets from TODOs** — with `revelo.jira.requireTicketForTodo` on, `TODO`/`FIXME` comments without a linked ticket get a warning and a quick fix that opens a create form in the panel (summary, description with a source link, project, type, priority, assignee search, epic/parent search, labels, due date). On create it writes the new key back into the comment (`// TODO(ABC-123): …`) and opens the issue.
+- **Create Jira tickets from TODOs** — with `revelo.jira.requireTicketForTodo` on, `TODO`/`FIXME` comments without a linked ticket get a warning and a quick fix that opens a create form in the panel (summary, description with a source link, project, type, priority, assignee search, epic/parent search, labels, due date). Options (types, priorities, labels, epics) are fetched from Jira and prefetched at startup so the form opens instantly. On create it writes the new key back into the comment (`// TODO(ABC-123): …`) and opens the issue.
+- **Ticket templates** — define reusable defaults in `revelo.jira.ticketTemplates` (project, type, priority, parent, labels, etc.). Each template adds its own "Create Jira {name} ticket from TODO" quick fix that opens the form pre-filled, and a template picker in the form lets you switch. Use `revelo.jira.visibleIssueTypes` / `visiblePriorities` / `visibleLabels` to trim long Jira lists down to the ones your team uses.
 
 References are detected only inside **comments** (per-language) and **Markdown/plaintext** prose, so ordinary code isn't matched.
 
@@ -54,9 +55,16 @@ Bare `#123` resolves against the workspace's `origin` git remote, or set `revelo
   "revelo.jira.siteUrl": "https://your-company.atlassian.net",
   "revelo.jira.email": "you@company.com",
   // Optional: restrict bare-key matching to your project keys
-  "revelo.jira.projectKeys": ["ABC", "PROJ"]
+  "revelo.jira.projectKeys": ["ABC", "PROJ"],
+  // Optional: templates that pre-fill the create form (name is required,
+  // everything else optional). Each also adds a quick fix.
+  "revelo.jira.ticketTemplates": [
+    { "name": "Bug", "projectKey": "ABC", "issueType": "Bug", "priorityId": "2", "labels": ["triage"] }
+  ]
 }
 ```
+
+> Tip: priority and assignee use internal Jira ids. Enable `revelo.jira.debug` to show them beside each option in the create form, then copy the id into your template.
 
 ## Commands
 
@@ -87,7 +95,12 @@ Bare `#123` resolves against the workspace's `origin` git remote, or set `revelo
 | `revelo.jira.projectKeys` | `[]` | Project keys to match (empty = any non-denylisted) |
 | `revelo.jira.requireTicketForTodo` | `false` | Warn on TODO comments with no linked Jira ticket |
 | `revelo.jira.todoKeywords` | `["TODO", "FIXME"]` | Comment keywords that trigger TODO detection |
-| `revelo.jira.issueTypes` | `["Task", "Bug", "Story"]` | Issue types offered when creating from a TODO (first is default) |
+| `revelo.jira.ticketTemplates` | `[]` | Saved templates that pre-populate the create form. Each needs a `name`; other fields (`projectKey`, `issueType`, `priorityId`, `parentKey`, `labels`, `assigneeAccountId`, `dueDate`) are optional. Each template also becomes a "Create Jira {name} ticket from TODO" quick fix |
+| `revelo.jira.visibleIssueTypes` | `[]` | Restrict the Type dropdown to these issue type names (empty = all types from Jira) |
+| `revelo.jira.visiblePriorities` | `[]` | Restrict the Priority dropdown, matched by id or name (empty = all) |
+| `revelo.jira.visibleLabels` | `[]` | Restrict the label suggestions (empty = all; free-text labels always allowed) |
+| `revelo.jira.prefetchEpicsMaxProjects` | `5` | Prefetch epics at startup for each configured project key, only when there are at most this many keys (`0` disables) |
+| `revelo.jira.debug` | `false` | Show internal Jira ids (priority, assignee) in the create form to help discover ids for templates |
 | `revelo.cache.ttlSeconds` | `300` | How long fetched details are cached |
 
 ## Editing

@@ -61,6 +61,11 @@ export interface JiraPriority {
   name: string;
 }
 
+export interface JiraIssueType {
+  id: string;
+  name: string;
+}
+
 export interface JiraEpic {
   key: string;
   summary: string;
@@ -281,6 +286,26 @@ export class JiraClient {
       });
       const issues = (res.issues ?? []) as Array<{ key?: string; fields?: { summary?: string } }>;
       return issues.map((i) => ({ key: i.key ?? '', summary: i.fields?.summary ?? '' }));
+    } catch (error) {
+      mapError(error);
+    }
+  }
+
+  /** Issue types defined in this Jira instance (instance-wide, deduped by name). */
+  async getIssueTypes(): Promise<JiraIssueType[]> {
+    try {
+      const types = await this.client.issueTypes.getIssueAllTypes();
+      const seen = new Set<string>();
+      const result: JiraIssueType[] = [];
+      // Subtasks can't be created standalone from a TODO; the instance-wide feed
+      // also repeats a type once per project scheme, so dedupe by name.
+      for (const t of types as Array<{ id?: string; name?: string; subtask?: boolean }>) {
+        const name = t.name ?? '';
+        if (!name || t.subtask || seen.has(name)) continue;
+        seen.add(name);
+        result.push({ id: t.id ?? '', name });
+      }
+      return result;
     } catch (error) {
       mapError(error);
     }

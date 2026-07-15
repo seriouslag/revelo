@@ -10,12 +10,16 @@ import {
   CREATE_COMMAND,
 } from './core/todoActions';
 import { WebviewManager } from './core/webviewManager';
-import { renderCreatePanel } from './providers/jira/createPanel';
+import {
+  renderCreatePanel,
+  renderCreateLoading,
+  type JiraTicketTemplate,
+} from './providers/jira/createPanel';
 import type { CreateOptionKind, InboundMessage } from './core/webviewProtocol';
 import type { EditOption, Provider, ProviderId, Reference } from './core/types';
 import { GitHubProvider } from './providers/github';
 import { SentryProvider } from './providers/sentry';
-import { JiraProvider } from './providers/jira';
+import { JiraProvider, type JiraCreateMeta } from './providers/jira';
 
 export function activate(context: vscode.ExtensionContext): void {
   const registry = new ProviderRegistry();
@@ -56,23 +60,71 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Open the panel with a Jira "create issue from TODO" form. On success,
   // write the new key back into the comment and show the created issue.
-  async function openCreatePanel(uri?: vscode.Uri, line?: number): Promise<void> {
+  async function openCreatePanel(
+    uri?: vscode.Uri,
+    line?: number,
+    templateName?: string,
+  ): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     const targetUri = uri ?? editor?.document.uri;
     if (!targetUri) {
       return;
     }
+
+    // Show the panel immediately with a loading state, before any async work, so
+    // the spinner paints without waiting on the document read or options fetch.
+    webview.show({ title: 'Create Jira ticket', renderBody: () => renderCreateLoading() });
+
     const document = await vscode.workspace.openTextDocument(targetUri);
     const targetLine = line ?? editor?.selection.active.line ?? 0;
     const todo = unlinkedTodoOnLine(document, targetLine);
     if (!todo) {
+      webview.close();
       vscode.window.showWarningMessage('Revelo: no unlinked TODO found on this line.');
       return;
     }
 
     const cfg = vscode.workspace.getConfiguration('revelo.jira');
     const projectKeys = cfg.get<string[]>('projectKeys', []);
-    const issueTypes = cfg.get<string[]>('issueTypes', ['Task', 'Bug', 'Story']);
+    const templates = cfg.get<JiraTicketTemplate[]>('ticketTemplates', []);
+
+    // Options come prefetched from Jira; if that fails it's an auth/connection
+    // problem, so close the panel and surface the error rather than leaving an
+    // empty form open.
+    let meta: JiraCreateMeta;
+    try {
+      meta = await jira.getCreateMeta();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      webview.close();
+      vscode.window.showErrorMessage(`Revelo: cannot load Jira options — ${msg}`);
+      return;
+    }
+
+    // The quick action carries the chosen template's name; the generic action
+    // and command palette pass nothing (plain form defaults).
+    const preselectTemplateIndex = templateName
+      ? templates.findIndex((t) => t.name === templateName)
+      : -1;
+
+    // Optional allowlists trim the (often huge) Jira lists down to the ones the
+    // team actually uses. Empty setting = show everything.
+    const visibleTypes = lowerAll(cfg.get<string[]>('visibleIssueTypes', []));
+    const visiblePriorities = lowerAll(cfg.get<string[]>('visiblePriorities', []));
+    const issueTypes = visibleTypes.length
+      ? meta.issueTypes.filter((t) => visibleTypes.includes(t.name.toLowerCase()))
+      : meta.issueTypes;
+    const priorities = visiblePriorities.length
+      ? meta.priorities.filter(
+          (p) =>
+            visiblePriorities.includes(p.id.toLowerCase()) ||
+            visiblePriorities.includes(p.name.toLowerCase()),
+        )
+      : meta.priorities;
+    const visibleLabels = lowerAll(cfg.get<string[]>('visibleLabels', []));
+    const labels = visibleLabels.length
+      ? meta.labels.filter((l) => visibleLabels.includes(l.toLowerCase()))
+      : meta.labels;
 
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(targetUri);
     const relPath = workspaceFolder
@@ -85,9 +137,21 @@ export function activate(context: vscode.ExtensionContext): void {
       renderBody: () =>
         renderCreatePanel({
           projectKeys,
-          issueTypes,
+          issueTypes: issueTypes.map((t) => t.name),
+          // A curated or short list is friendlier as a plain dropdown; only fall
+          // back to a searchable combobox for the full (often huge) Jira list.
+          typeAsDropdown: visibleTypes.length > 0 || issueTypes.length < 10,
+          priorities,
+          labels,
+          // Short/curated label lists show as toggle chips; the full list stays a
+          // search combobox.
+          labelsAsChips: visibleLabels.length > 0 || labels.length < 10,
+          epicsByProject: meta.epicsByProject,
           summary: todo.summary || todo.keyword,
           description,
+          templates,
+          preselectTemplateIndex,
+          debug: cfg.get<boolean>('debug', false),
         }),
       onMessage: async (message) => {
         if (message.type === 'createOptions') {
@@ -179,6 +243,10 @@ export function activate(context: vscode.ExtensionContext): void {
     { provider: jira, command: 'revelo.setJiraToken' },
   ]);
 
+  // Warm the create-form options (issue types, priorities, labels, epics) so the
+  // form opens instantly. Best-effort: a missing token just skips it.
+  void jira.prefetchCreateMeta();
+
   if (context.extensionMode === vscode.ExtensionMode.Development) {
     void vscode.commands.executeCommand('setContext', 'revelo.devMode', true);
     const clearToken = async (
@@ -207,8 +275,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.registerCodeActionsProvider(selector, createTodoCodeActionProvider(), {
       providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
     }),
-    vscode.commands.registerCommand(CREATE_COMMAND, (uri?: vscode.Uri, line?: number) =>
-      openCreatePanel(uri, line),
+    vscode.commands.registerCommand(
+      CREATE_COMMAND,
+      (uri?: vscode.Uri, line?: number, templateName?: string) =>
+        openCreatePanel(uri, line, templateName),
     ),
     vscode.languages.registerHoverProvider(selector, createHoverProvider(registry, index)),
     vscode.languages.registerDocumentLinkProvider(selector, createLinkProvider(registry, index)),
@@ -238,6 +308,10 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {}
 
 // Feed the create form's dynamic controls: priorities, project assignees, and
+function lowerAll(values: string[]): string[] {
+  return values.map((v) => v.toLowerCase());
+}
+
 // epic search. Returns generic {id,label} options the combobox/select render.
 async function createOptions(
   jira: JiraProvider,
@@ -245,22 +319,28 @@ async function createOptions(
   projectKey: string,
   query: string,
 ): Promise<EditOption[]> {
-  if (kind === 'priority') {
-    const priorities = await jira.getPriorities();
-    return priorities.map((p) => ({ id: p.id, label: p.name }));
-  }
   if (kind === 'createAssignee') {
+    const debug = vscode.workspace.getConfiguration('revelo.jira').get<boolean>('debug', false);
     const users = await jira.getAssignableUsersForProject(projectKey, query);
-    return users.map((u) => ({
-      id: u.accountId,
-      label: u.emailAddress ? `${u.displayName} (${u.emailAddress})` : u.displayName,
-    }));
+    return users.map((u) => {
+      const base = u.emailAddress ? `${u.displayName} (${u.emailAddress})` : u.displayName;
+      return { id: u.accountId, label: debug ? `${base} [id: ${u.accountId}]` : base };
+    });
   }
+  const meta = await jira.getCreateMeta();
   if (kind === 'label') {
-    const labels = await jira.getLabels();
+    const visible = vscode.workspace
+      .getConfiguration('revelo.jira')
+      .get<string[]>('visibleLabels', [])
+      .map((l) => l.toLowerCase());
+    const labels = visible.length
+      ? meta.labels.filter((l) => visible.includes(l.toLowerCase()))
+      : meta.labels;
     return labels.map((l) => ({ id: l, label: l }));
   }
-  const epics = await jira.searchEpics(projectKey);
+  // Prefetched epics when the project was in range; otherwise fetch on demand.
+  const epics =
+    meta.epicsByProject[projectKey.toUpperCase()] ?? (await jira.searchEpics(projectKey));
   return epics.map((e) => ({ id: e.key, label: `${e.key} — ${e.summary}` }));
 }
 

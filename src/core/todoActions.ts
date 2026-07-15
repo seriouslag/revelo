@@ -21,6 +21,14 @@ function todoKeywords(): string[] {
   return configured.length > 0 ? configured : DEFAULT_TODO_KEYWORDS;
 }
 
+function templateNames(): string[] {
+  return vscode.workspace
+    .getConfiguration('revelo.jira')
+    .get<{ name?: string }[]>('ticketTemplates', [])
+    .map((t) => t.name ?? '')
+    .filter((n) => n.length > 0);
+}
+
 /** Comment spans for a single line, scanning from the top for block state. */
 function commentSpansAtLine(document: vscode.TextDocument, targetLine: number): Span[] | undefined {
   if (isProse(document.languageId)) {
@@ -73,18 +81,21 @@ export function createTodoCodeActionProvider(): vscode.CodeActionProvider {
       if (!todo) {
         return [];
       }
-      const action = new vscode.CodeAction(
-        'Create Jira ticket from TODO',
-        vscode.CodeActionKind.QuickFix,
-      );
-      action.command = {
-        command: CREATE_COMMAND,
-        title: 'Create Jira ticket from TODO',
-        arguments: [document.uri, line],
+      const diagnostics = context.diagnostics.filter((d) => d.code === TODO_DIAGNOSTIC_CODE);
+      const makeAction = (title: string, templateName?: string): vscode.CodeAction => {
+        const action = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
+        action.command = { command: CREATE_COMMAND, title, arguments: [document.uri, line, templateName] };
+        // Associate with our diagnostic so it surfaces on the squiggle.
+        action.diagnostics = diagnostics;
+        return action;
       };
-      // Associate with our diagnostic so it surfaces on the squiggle.
-      action.diagnostics = context.diagnostics.filter((d) => d.code === TODO_DIAGNOSTIC_CODE);
-      return [action];
+      // One action per saved template (each pre-fills the form from that
+      // template), then a generic action last (plain form defaults, no template).
+      const perTemplate = templateNames().map((name) =>
+        makeAction(`Create Jira ${name} ticket from TODO`, name),
+      );
+      const generic = makeAction('Create Jira ticket from TODO');
+      return [...perTemplate, generic];
     },
   };
 }

@@ -19,6 +19,8 @@ export interface ComboboxConfig {
   chips?: HTMLElement;
   /** Single only: called when a row is chosen (id '' means the special row). */
   onSelect?: (option: EditOption) => void;
+  /** Multi only: called whenever the selected set changes (add/remove). */
+  onChange?: (values: string[]) => void;
   /** Restore the last committed input text on blur/escape (edit-in-place). */
   revertOnBlur?: boolean;
   onError?: (e: unknown) => void;
@@ -29,6 +31,12 @@ export interface ComboboxHandle {
   getValue(): string;
   /** Multi: the selected ids. */
   getValues(): string[];
+  /** Single: set the selected value and its displayed label. */
+  setValue(id: string, label: string): void;
+  /** Multi: replace the selected values. */
+  setValues(values: string[]): void;
+  /** Multi: add the value if absent, remove it if present. */
+  toggleValue(value: string): void;
 }
 
 const DEBOUNCE_MS = 250;
@@ -64,6 +72,9 @@ export function createCombobox(config: ComboboxConfig): ComboboxHandle {
   };
 
   const renderChips = (): void => {
+    // Every multi-mode mutation flows through here, so it's the one spot to
+    // notify listeners (e.g. label toggle buttons that mirror the selection).
+    config.onChange?.(selected);
     if (!config.chips) return;
     config.chips.innerHTML = '';
     for (const value of selected) {
@@ -198,5 +209,23 @@ export function createCombobox(config: ComboboxConfig): ComboboxHandle {
   return {
     getValue: () => selectedId,
     getValues: () => selected,
+    setValue: (id, label) => {
+      selectedId = id;
+      input.value = id ? label : '';
+      committed = input.value;
+    },
+    setValues: (values) => {
+      selected.splice(0, selected.length, ...values);
+      input.value = '';
+      renderChips();
+    },
+    toggleValue: (value) => {
+      const v = value.trim();
+      if (!v) return;
+      const i = selected.indexOf(v);
+      if (i >= 0) selected.splice(i, 1);
+      else selected.push(v);
+      renderChips();
+    },
   };
 }

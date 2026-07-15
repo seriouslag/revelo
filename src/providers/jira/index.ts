@@ -8,9 +8,18 @@ import {
   type JiraIssue,
   type JiraPermissions,
   type JiraPriority,
+  type JiraIssueType,
   type JiraAssignableUser,
   type JiraEpic,
 } from './api';
+
+/** Prefetched, instance-wide options for the create-from-TODO form. */
+export interface JiraCreateMeta {
+  issueTypes: JiraIssueType[];
+  priorities: JiraPriority[];
+  labels: string[];
+  epicsByProject: Record<string, JiraEpic[]>;
+}
 import { JiraAuth } from './auth';
 import { adfToMarkdown, markdownToHtml, textToAdf, type AdfNode } from './adf';
 import { actorName, deriveJiraState } from './render';
@@ -22,6 +31,7 @@ export class JiraProvider implements Provider {
   readonly auth: JiraAuth;
 
   private readonly cache: ReferenceCache<ItemDetails>;
+  private createMeta?: { at: number; value: Promise<JiraCreateMeta> };
 
   constructor(secrets: vscode.SecretStorage) {
     this.auth = new JiraAuth(secrets);
@@ -35,6 +45,7 @@ export class JiraProvider implements Provider {
 
   clearCache(): void {
     this.cache.clear();
+    this.createMeta = undefined;
   }
 
   private ttlSeconds(): number {
@@ -229,10 +240,6 @@ export class JiraProvider implements Provider {
     });
   }
 
-  async getPriorities(): Promise<JiraPriority[]> {
-    return (await this.configClient()).getPriorities();
-  }
-
   async getAssignableUsersForProject(
     projectKey: string,
     query: string,
@@ -244,8 +251,60 @@ export class JiraProvider implements Provider {
     return (await this.configClient()).searchEpics(projectKey);
   }
 
-  async getLabels(): Promise<string[]> {
-    return (await this.configClient()).getLabels();
+  private prefetchEpicsMaxProjects(): number {
+    return vscode.workspace
+      .getConfiguration('revelo.jira')
+      .get<number>('prefetchEpicsMaxProjects', 5);
+  }
+
+  /**
+   * Instance-wide options for the create form (issue types, priorities, labels)
+   * plus epics for the configured projects. Cached for the configured TTL and
+   * shared across opens. Throws if Jira can't be reached — the caller surfaces
+   * that as an error rather than rendering a form with empty dropdowns.
+   */
+  async getCreateMeta(): Promise<JiraCreateMeta> {
+    const fresh =
+      this.createMeta && Date.now() - this.createMeta.at < this.ttlSeconds() * 1000;
+    if (this.createMeta && fresh) {
+      return this.createMeta.value;
+    }
+    const value = this.fetchCreateMeta();
+    this.createMeta = { at: Date.now(), value };
+    // Don't cache a rejection: a transient failure shouldn't poison later opens.
+    value.catch(() => {
+      this.createMeta = undefined;
+    });
+    return value;
+  }
+
+  /** Warm the create-meta cache; best-effort (no token yet is not an error). */
+  async prefetchCreateMeta(): Promise<void> {
+    if (!this.isEnabled()) return;
+    try {
+      await this.getCreateMeta();
+    } catch {
+      // Ignore — surfaced later when the user actually opens the create form.
+    }
+  }
+
+  private async fetchCreateMeta(): Promise<JiraCreateMeta> {
+    const client = await this.configClient();
+    const [issueTypes, priorities, labels] = await Promise.all([
+      client.getIssueTypes(),
+      client.getPriorities(),
+      client.getLabels(),
+    ]);
+    const epicsByProject: Record<string, JiraEpic[]> = {};
+    const max = this.prefetchEpicsMaxProjects();
+    const keys = this.configuredKeys();
+    if (max > 0 && keys.length > 0 && keys.length <= max) {
+      const lists = await Promise.all(keys.map((k) => client.searchEpics(k).catch(() => [])));
+      keys.forEach((k, i) => {
+        epicsByProject[k] = lists[i];
+      });
+    }
+    return { issueTypes, priorities, labels, epicsByProject };
   }
 
   private toDetails(
