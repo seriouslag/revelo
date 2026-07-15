@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { GitHubClient, NotFoundError, RateLimitError } from '../providers/github/api';
 
+// Octokit only parses the response body when content-type is JSON, and reads
+// the etag header for conditional requests.
 function jsonResponse(body: unknown, init: { status?: number; etag?: string } = {}) {
-  const headers = new Headers();
+  const headers = new Headers({ 'content-type': 'application/json; charset=utf-8' });
   if (init.etag) headers.set('etag', init.etag);
   return new Response(JSON.stringify(body), { status: init.status ?? 200, headers });
 }
@@ -31,7 +33,7 @@ describe('GitHubClient.fetchIssueOrPr', () => {
     const { data } = await client.fetchIssueOrPr('a', 'b', '2');
     expect(data.merged).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls[1][0]).toContain('/pulls/2');
+    expect(String(fetchImpl.mock.calls[1][0])).toContain('/pulls/2');
   });
 
   it('throws NotFoundError on 404', async () => {
@@ -41,7 +43,11 @@ describe('GitHubClient.fetchIssueOrPr', () => {
   });
 
   it('throws RateLimitError when remaining is 0', async () => {
-    const headers = new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1700000000' });
+    const headers = new Headers({
+      'content-type': 'application/json',
+      'x-ratelimit-remaining': '0',
+      'x-ratelimit-reset': '1700000000',
+    });
     const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status: 403, headers }));
     const client = new GitHubClient({ baseUrl: 'https://api.github.com', fetchImpl });
     await expect(client.fetchIssueOrPr('a', 'b', '1')).rejects.toBeInstanceOf(RateLimitError);
@@ -61,8 +67,8 @@ describe('GitHubClient.fetchIssueOrPr', () => {
     const second = await client.fetchIssueOrPr('a', 'b', '1');
     expect(second.data.title).toBe('Cached');
 
-    const sentEtag = (fetchImpl.mock.calls[1][1] as RequestInit).headers as Record<string, string>;
-    expect(sentEtag['If-None-Match']).toBe('W/"abc"');
+    const sentHeaders = (fetchImpl.mock.calls[1][1] as RequestInit).headers as Record<string, string>;
+    expect(sentHeaders['if-none-match']).toBe('W/"abc"');
   });
 });
 
@@ -77,7 +83,7 @@ describe('GitHubClient write operations', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ number: 1, state: 'closed' }));
     await client(fetchImpl).updateState('a', 'b', '1', 'closed');
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://api.github.com/repos/a/b/issues/1');
+    expect(String(url)).toBe('https://api.github.com/repos/a/b/issues/1');
     expect(init.method).toBe('PATCH');
     expect(JSON.parse(init.body as string)).toEqual({ state: 'closed' });
   });
@@ -86,7 +92,7 @@ describe('GitHubClient write operations', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([{ name: 'bug' }]));
     await client(fetchImpl).setLabels('a', 'b', '1', ['bug', 'p1']);
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://api.github.com/repos/a/b/issues/1/labels');
+    expect(String(url)).toBe('https://api.github.com/repos/a/b/issues/1/labels');
     expect(init.method).toBe('PUT');
     expect(JSON.parse(init.body as string)).toEqual({ labels: ['bug', 'p1'] });
   });
@@ -95,7 +101,7 @@ describe('GitHubClient write operations', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ number: 1 }));
     await client(fetchImpl).setAssignees('a', 'b', '1', ['octocat']);
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://api.github.com/repos/a/b/issues/1');
+    expect(String(url)).toBe('https://api.github.com/repos/a/b/issues/1');
     expect(init.method).toBe('PATCH');
     expect(JSON.parse(init.body as string)).toEqual({ assignees: ['octocat'] });
   });
@@ -106,22 +112,22 @@ describe('GitHubClient write operations', () => {
     );
     const labels = await client(fetchImpl).listRepoLabels('a', 'b');
     expect(labels.map((l) => l.name)).toEqual(['bug', 'docs']);
-    expect(fetchImpl.mock.calls[0][0]).toContain('/repos/a/b/labels');
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/repos/a/b/labels');
   });
 
   it('lists assignable users', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([{ login: 'octocat' }]));
     const users = await client(fetchImpl).listAssignableUsers('a', 'b');
     expect(users[0].login).toBe('octocat');
-    expect(fetchImpl.mock.calls[0][0]).toContain('/repos/a/b/assignees');
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/repos/a/b/assignees');
   });
 
   it('sends auth + content-type on writes', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}));
     await client(fetchImpl).updateState('a', 'b', '1', 'open');
     const headers = (fetchImpl.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
-    expect(headers.Authorization).toBe('Bearer tok');
-    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers.authorization).toBe('token tok');
+    expect(headers['content-type']).toBe('application/json; charset=utf-8');
   });
 });
 

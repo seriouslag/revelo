@@ -180,6 +180,7 @@
     "vitest": "^4.1.0"
   },
   "dependencies": {
+    "@octokit/rest": "^22.0.1",
     "adf-to-md": "^1.2.1"
   }
 }

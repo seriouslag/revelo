@@ -1,3 +1,5 @@
+import { Octokit } from '@octokit/rest';
+
 export interface GitHubUser {
   login: string;
   avatar_url?: string;
@@ -57,79 +59,69 @@ interface CachedEtag {
   data: GitHubIssue;
 }
 
+interface OctokitError {
+  status?: number;
+  response?: { headers?: Record<string, string> };
+}
+
 export class GitHubClient {
   private readonly etags = new Map<string, CachedEtag>();
-  private readonly doFetch: typeof fetch;
+  private readonly octokit: Octokit;
+  private readonly hasToken: boolean;
 
-  constructor(private readonly options: GitHubClientOptions) {
-    this.doFetch = options.fetchImpl ?? fetch;
+  constructor(options: GitHubClientOptions) {
+    this.hasToken = Boolean(options.token);
+    this.octokit = new Octokit({
+      auth: options.token,
+      baseUrl: options.baseUrl,
+      request: options.fetchImpl ? { fetch: options.fetchImpl } : {},
+    });
   }
 
-  private headers(etag?: string): Record<string, string> {
-    const h: Record<string, string> = {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    };
-    if (this.options.token) {
-      h.Authorization = `Bearer ${this.options.token}`;
-    }
-    if (etag) {
-      h['If-None-Match'] = etag;
-    }
-    return h;
-  }
-
-  private async request(path: string): Promise<FetchResult> {
-    const url = `${this.options.baseUrl}${path}`;
-    const cached = this.etags.get(url);
-    const res = await this.doFetch(url, { headers: this.headers(cached?.etag) });
-
-    if (res.status === 304 && cached) {
-      return { data: cached.data, etag: cached.etag };
-    }
-    if (res.status === 404) {
+  // Map Octokit RequestErrors onto our domain errors. 403/429 with an
+  // exhausted rate-limit window becomes RateLimitError; 404 becomes NotFound.
+  private fail(error: unknown): never {
+    const err = error as OctokitError;
+    const status = err.status;
+    if (status === 404) {
       throw new NotFoundError();
     }
-    if (res.status === 403 || res.status === 429) {
-      const remaining = res.headers.get('x-ratelimit-remaining');
-      if (remaining === '0' || res.status === 429) {
-        const reset = res.headers.get('x-ratelimit-reset');
+    if (status === 403 || status === 429) {
+      const headers = err.response?.headers ?? {};
+      const remaining = headers['x-ratelimit-remaining'];
+      if (remaining === '0' || status === 429) {
+        const reset = headers['x-ratelimit-reset'];
         throw new RateLimitError(reset ? Number(reset) : undefined);
       }
     }
-    if (!res.ok) {
-      throw new Error(`GitHub API error ${res.status}`);
-    }
-
-    const data = (await res.json()) as GitHubIssue;
-    const etag = res.headers.get('etag') ?? undefined;
-    if (etag) {
-      this.etags.set(url, { etag, data });
-    }
-    return { data, etag };
+    throw error instanceof Error ? error : new Error(String(error));
   }
 
-  private async write<T>(path: string, method: string, body: unknown): Promise<T> {
-    const url = `${this.options.baseUrl}${path}`;
-    const headers = this.headers();
-    headers['Content-Type'] = 'application/json';
-    const res = await this.doFetch(url, { method, headers, body: JSON.stringify(body) });
-
-    if (res.status === 404) {
-      throw new NotFoundError();
-    }
-    if (res.status === 403 || res.status === 429) {
-      const remaining = res.headers.get('x-ratelimit-remaining');
-      if (remaining === '0' || res.status === 429) {
-        const reset = res.headers.get('x-ratelimit-reset');
-        throw new RateLimitError(reset ? Number(reset) : undefined);
+  // Conditional GET with ETag caching. On 304 the cached body is reused; a
+  // fresh 200 refreshes the cache. `cacheKey` distinguishes issue vs. PR reads.
+  private async conditionalGet(
+    cacheKey: string,
+    route: string,
+    params: Record<string, unknown>,
+  ): Promise<FetchResult> {
+    const cached = this.etags.get(cacheKey);
+    try {
+      const res = await this.octokit.request(route, {
+        ...params,
+        headers: cached ? { 'if-none-match': cached.etag } : undefined,
+      });
+      const data = res.data as unknown as GitHubIssue;
+      const etag = (res.headers as Record<string, string>).etag;
+      if (etag) {
+        this.etags.set(cacheKey, { etag, data });
       }
+      return { data, etag };
+    } catch (error) {
+      if ((error as OctokitError).status === 304 && cached) {
+        return { data: cached.data, etag: cached.etag };
+      }
+      this.fail(error);
     }
-    if (!res.ok) {
-      throw new Error(`GitHub API error ${res.status}`);
-    }
-    const text = await res.text();
-    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   /**
@@ -138,41 +130,72 @@ export class GitHubClient {
    * request to /pulls/{n} enriches with merge/draft state.
    */
   async fetchIssueOrPr(owner: string, repo: string, number: string): Promise<FetchResult> {
-    const issue = await this.request(`/repos/${owner}/${repo}/issues/${number}`);
+    const issue = await this.conditionalGet(
+      `issue:${owner}/${repo}/${number}`,
+      'GET /repos/{owner}/{repo}/issues/{issue_number}',
+      { owner, repo, issue_number: Number(number) },
+    );
     if (!issue.data.pull_request) {
       return issue;
     }
     try {
-      const pr = await this.request(`/repos/${owner}/${repo}/pulls/${number}`);
-      return pr;
+      return await this.conditionalGet(
+        `pull:${owner}/${repo}/${number}`,
+        'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+        { owner, repo, pull_number: Number(number) },
+      );
     } catch {
       return issue;
     }
   }
 
   /** Open or close an issue/PR (state is shared via the /issues endpoint). */
-  updateState(
+  async updateState(
     owner: string,
     repo: string,
     number: string,
     state: 'open' | 'closed',
   ): Promise<GitHubIssue> {
-    return this.write(`/repos/${owner}/${repo}/issues/${number}`, 'PATCH', { state });
+    try {
+      const res = await this.octokit.request(
+        'PATCH /repos/{owner}/{repo}/issues/{issue_number}',
+        { owner, repo, issue_number: Number(number), state },
+      );
+      return res.data as unknown as GitHubIssue;
+    } catch (error) {
+      this.fail(error);
+    }
   }
 
   /** Replace the full set of labels on an issue/PR. */
-  setLabels(owner: string, repo: string, number: string, labels: string[]): Promise<unknown> {
-    return this.write(`/repos/${owner}/${repo}/issues/${number}/labels`, 'PUT', { labels });
+  async setLabels(owner: string, repo: string, number: string, labels: string[]): Promise<unknown> {
+    try {
+      const res = await this.octokit.request(
+        'PUT /repos/{owner}/{repo}/issues/{issue_number}/labels',
+        { owner, repo, issue_number: Number(number), labels },
+      );
+      return res.data;
+    } catch (error) {
+      this.fail(error);
+    }
   }
 
   /** Replace the full set of assignees on an issue/PR. */
-  setAssignees(
+  async setAssignees(
     owner: string,
     repo: string,
     number: string,
     assignees: string[],
   ): Promise<GitHubIssue> {
-    return this.write(`/repos/${owner}/${repo}/issues/${number}`, 'PATCH', { assignees });
+    try {
+      const res = await this.octokit.request(
+        'PATCH /repos/{owner}/{repo}/issues/{issue_number}',
+        { owner, repo, issue_number: Number(number), assignees },
+      );
+      return res.data as unknown as GitHubIssue;
+    } catch (error) {
+      this.fail(error);
+    }
   }
 
   /**
@@ -182,14 +205,13 @@ export class GitHubClient {
    * unauthenticated or the field is absent.
    */
   async canPush(owner: string, repo: string): Promise<boolean> {
-    if (!this.options.token) {
+    if (!this.hasToken) {
       return false;
     }
     try {
-      const repoData = await this.getJson<{
-        permissions?: { push?: boolean; maintain?: boolean; admin?: boolean };
-      }>(`/repos/${owner}/${repo}`);
-      const p = repoData.permissions;
+      const res = await this.octokit.request('GET /repos/{owner}/{repo}', { owner, repo });
+      const p = (res.data as { permissions?: { push?: boolean; maintain?: boolean; admin?: boolean } })
+        .permissions;
       return Boolean(p?.push || p?.maintain || p?.admin);
     } catch {
       return false;
@@ -197,24 +219,29 @@ export class GitHubClient {
   }
 
   async listRepoLabels(owner: string, repo: string): Promise<GitHubLabel[]> {
-    return this.getJson<GitHubLabel[]>(`/repos/${owner}/${repo}/labels?per_page=100`);
+    try {
+      const res = await this.octokit.request('GET /repos/{owner}/{repo}/labels', {
+        owner,
+        repo,
+        per_page: 100,
+      });
+      return res.data as GitHubLabel[];
+    } catch (error) {
+      this.fail(error);
+    }
   }
 
   async listAssignableUsers(owner: string, repo: string): Promise<GitHubUser[]> {
-    return this.getJson<GitHubUser[]>(`/repos/${owner}/${repo}/assignees?per_page=100`);
-  }
-
-  private async getJson<T>(path: string): Promise<T> {
-    const res = await this.doFetch(`${this.options.baseUrl}${path}`, {
-      headers: this.headers(),
-    });
-    if (res.status === 404) {
-      throw new NotFoundError();
+    try {
+      const res = await this.octokit.request('GET /repos/{owner}/{repo}/assignees', {
+        owner,
+        repo,
+        per_page: 100,
+      });
+      return res.data as GitHubUser[];
+    } catch (error) {
+      this.fail(error);
     }
-    if (!res.ok) {
-      throw new Error(`GitHub API error ${res.status}`);
-    }
-    return (await res.json()) as T;
   }
 
   clearEtags(): void {
