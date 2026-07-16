@@ -76,6 +76,37 @@ describe('createCombobox (single-select)', () => {
     expect(rowLabels(list)).toEqual(['Alice']);
   });
 
+  it('resolveValue looks up the label from loaded options', async () => {
+    const { input, list } = setup('<input /><ul></ul>');
+    const load = vi.fn(async () => USERS);
+    const box = createCombobox({ input, list, localFilter: true, load });
+
+    await box.resolveValue('u3');
+
+    expect(box.getValue()).toBe('u3');
+    expect(input.value).toBe('Beth');
+  });
+
+  it('resolveValue falls back to the id when no option matches', async () => {
+    const { input, list } = setup('<input /><ul></ul>');
+    const box = createCombobox({ input, list, load: async () => USERS });
+
+    await box.resolveValue('FP-6449');
+
+    expect(box.getValue()).toBe('FP-6449');
+    expect(input.value).toBe('FP-6449');
+  });
+
+  it('resolveValue with an empty id clears the field', async () => {
+    const { input, list } = setup('<input /><ul></ul>');
+    const box = createCombobox({ input, list, load: async () => USERS });
+
+    await box.resolveValue('');
+
+    expect(box.getValue()).toBe('');
+    expect(input.value).toBe('');
+  });
+
   it('fetches once and filters locally when localFilter is set', async () => {
     const { input, list } = setup('<input /><ul></ul>');
     const load = vi.fn(async () => USERS);

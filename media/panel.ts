@@ -441,7 +441,7 @@ function setFieldValue(el: HTMLInputElement | HTMLSelectElement | null, value: s
       if (t.issueType) setType(t.issueType);
       if (t.priorityId) setFieldValue(priorityEl, t.priorityId);
       if (t.dueDate && dueDateEl) dueDateEl.value = t.dueDate;
-      if (t.parentKey) parentBox?.setValue(t.parentKey, t.parentKey);
+      if (t.parentKey) void parentBox?.resolveValue(t.parentKey);
       if (t.assigneeAccountId) assigneeBox?.setValue(t.assigneeAccountId, t.assigneeAccountId);
       if (t.labels) labelsBox?.setValues(t.labels);
     };

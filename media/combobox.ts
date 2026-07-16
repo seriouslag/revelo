@@ -33,6 +33,12 @@ export interface ComboboxHandle {
   getValues(): string[];
   /** Single: set the selected value and its displayed label. */
   setValue(id: string, label: string): void;
+  /**
+   * Single: set the selected value by id, resolving its label from the loaded
+   * options (falls back to the id itself if no option matches). Use when you
+   * have a key but not its display label (e.g. a template's parentKey).
+   */
+  resolveValue(id: string): Promise<void>;
   /** Multi: replace the selected values. */
   setValues(values: string[]): void;
   /** Multi: add the value if absent, remove it if present. */
@@ -213,6 +219,25 @@ export function createCombobox(config: ComboboxConfig): ComboboxHandle {
       selectedId = id;
       input.value = id ? label : '';
       committed = input.value;
+    },
+    resolveValue: async (id) => {
+      selectedId = id;
+      if (!id) {
+        input.value = '';
+        committed = '';
+        return;
+      }
+      let label = id;
+      try {
+        if (!cache) cache = await config.load('');
+        label = cache.find((o) => o.id === id)?.label ?? id;
+      } catch (e) {
+        config.onError?.(e);
+      }
+      // A concurrent selection may have superseded this resolve.
+      if (selectedId !== id) return;
+      input.value = label;
+      committed = label;
     },
     setValues: (values) => {
       selected.splice(0, selected.length, ...values);
