@@ -6,7 +6,7 @@
   "publisher": "seriouslag",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.125.0"
   },
   "categories": [
     "Other",
@@ -281,12 +281,12 @@
     "@kubb/plugin-oas": "^4.39.2",
     "@kubb/plugin-ts": "^4.39.2",
     "@kubb/plugin-zod": "^4.39.2",
-    "@types/node": "^24.0.0",
-    "@types/vscode": "~1.85.0",
+    "@types/node": "^26.1.1",
+    "@types/vscode": "^1.125.0",
     "happy-dom": "^20.10.6",
     "oxlint": "^1.73.0",
-    "rolldown": "^1.1.5",
-    "typescript": "^5.9.0",
+    "rolldown": "^1.2.0",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.0"
   },
   "dependencies": {
